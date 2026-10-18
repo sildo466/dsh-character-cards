@@ -70,17 +70,30 @@ P2 新增的是**运行时改变**这条链上第一环的能力。
 
 ### 4.2 重绑机制（本节唯一的真实失败模式）
 
-**不能**用 `agent.ctx.inject(...)` 返回的 fiber 来重绑——它的 `dispose()` 是**异步**的，
-中间存在一个窗口 session 没有卡；若撞上 `assemble()`，那一轮就掉卡。
+**先说排除掉的两条路**：
 
-**做法**：在 inject 回调内把 `section()` 返回的 disposer 存起来；重绑时**同步**执行
-`dispose 旧的 → 注册新的`。
+- **不能用** `agent.ctx.inject(...)` 返回的 fiber 做重绑——它的 `dispose()` 是**异步**的。
+- **也不能**指望"一次同步的 dispose + register"。`ctx.inject` 的回调**必定**至少延后一个
+  microtask，即使依赖早已可用：`_reload()` 的第一件事就是 `await Promise.resolve()`
+  （`vendor/cordis/src/fiber.ts:650`）。
+- **更不能**绕开 inject 直接写 `agent.ctx.systemPrompt`——Cordis 的依赖守卫会以
+  「service not declared」拒绝未声明的访问。
 
-`SystemPrompt.assemble()` 开头是**同步**抓取 section 表的，因此同一 tick 内换完
-不会有轮次掉卡。这一点必须有测试钉住（见 §7）。
+**所以做法是**：在 inject 回调里把 `section()` 返回的 disposer 存下来；重绑时
+**同步 dispose 旧的**，再走 inject 注册新的。
 
-`NamedEntries.insert()` 的 undo 会 `data.delete(name)`，所以同名重注册不会撞重名
-（`packages/core/scope/src/store.ts:38`，GOAL §4.2）。
+**已知代价**：dispose 与注册之间存在**一个 microtask 的窗口**。若恰好有 `assemble()`
+在该窗口内开始，那一轮会掉卡。
+
+**为什么接受**：危害是"一轮没有卡"，**不是**状态损坏、崩溃或 UI 异常——下一轮自动恢复。
+而触发它需要一次模型步与一次切卡请求在同一 microtask 内交错。
+
+**为什么不先注册新的再 dispose 旧的**：同一个 scope 里 section 名不能重复（重名抛异常），
+所以那需要每代换一个名字，而换名意味着窗口内两个 identity section 同时存在——
+**比掉卡更糟**。
+
+**测试钉的是行为，不是时序**：重绑 settle 之后，注册表中只有新卡的文本。
+
 
 ### 4.3 目标 session 没有 live agent 时
 
@@ -202,11 +215,14 @@ token 占用 + 全局默认切换 + **每个 session 当前卡只读展示**。
 
 ```
 POST /session/<id>/card  { "cardId": "patient-teacher" }
-→ status.assembles[0].ourChars  应从 152 变为 184
+→ status.assembles[0].ourChars  应从 454 变为 551
 ```
 
 `assembles[]`（监听 `system-prompt/assemble` 瀑布事件）是 P1 调试时留下的资产，
 能直接读出**真实装配出的 section 列表**。切卡是否真的换了提示词，看数值即可。
+
+**注意 `ourChars` 是字符数，不是 token 数**（简短审阅者 454 chars / 152 tokens，
+耐心的教学者 551 chars / 184 tokens）。用错会以为没生效。
 
 回滚验证：`POST { "cardId": null }` → `ourChars` 变回默认卡的数。
 
