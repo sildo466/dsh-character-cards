@@ -1,10 +1,9 @@
 // dsh-character-cards - client half.
 //
-// P0 skeleton: prove the browser half loads and can claim a slot without
-// disturbing the rest of the client composition. The only contribution is a
-// detail pane on this bundle's row in the plugin manager, which doubles as the
-// visible marker that the package installed. Card picking and editing arrive
-// in P3/P4.
+// A self-adaptive card switcher: a slot that hands over a `sessionId` switches
+// that session's card, a slot that does not switches the global default. The
+// same component serves both surfaces; `switcherMode` makes the choice explicit
+// and testable.
 //
 // The module is a classic client bundle (client-modules protocol): it registers
 // a factory with window.__ModuleLoader__ and returns apply(). `react` is a
@@ -16,22 +15,110 @@ window.__ModuleLoader__.load({
   factory: (require) => {
     const react = require('react')
 
+    const ROUTE = '/dsh-character-cards'
+
     /**
-     * Detail pane for this bundle's row in the plugin manager.
-     * @param {{ view?: string }} props - slot props; `summary` renders the one-line row.
-     * @returns {unknown} a React element, or the summary string.
+     * Which surface a switcher instance is: a slot that hands over a sessionId
+     * switches that session, a slot that does not switches the global default.
+     * @param props - the slot's props.
+     * @returns the mode.
      */
-    function CardSection({ view } = {}) {
-      if (view === 'summary') return '角色卡骨架已装载（P0）'
+    function switcherMode(props) {
+      return typeof props?.sessionId === 'string' && props.sessionId.length > 0 ? 'session' : 'global'
+    }
+
+    /** GET JSON, returning undefined instead of throwing. */
+    async function getJson(path) {
+      try {
+        const res = await fetch(`${ROUTE}${path}`)
+        if (!res.ok) return undefined
+        return await res.json()
+      } catch {
+        return undefined
+      }
+    }
+
+    /** POST JSON, returning undefined instead of throwing. */
+    async function postJson(path, body) {
+      try {
+        const res = await fetch(`${ROUTE}${path}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+        if (!res.ok) return undefined
+        return await res.json()
+      } catch {
+        return undefined
+      }
+    }
+
+    /**
+     * Which option a switcher shows before the user touches it.
+     *
+     * The two modes answer different questions. Global mode has no "follow the
+     * default" entry, so it must show the current default itself. Session mode
+     * shows the session's own override, or the empty value that means "follow
+     * the default".
+     * @param mode - `'session'` or `'global'`.
+     * @param cards - the `/cards` payload.
+     * @param session - the `/session/<id>` payload, or undefined in global mode.
+     * @returns the value to select.
+     */
+    function initialSelection(mode, cards, session) {
+      if (mode === 'global') return cards?.defaultCard ?? ''
+      return session?.override ?? ''
+    }
+
+    /**
+     * Card picker. Degrades to a plain static label whenever the host is
+     * unreachable, so a broken fetch can never take the composer down.
+     * @param props - slot props; `sessionId` selects the mode.
+     */
+    function CardSwitcher(props) {
+      const mode = switcherMode(props)
+      const sessionId = mode === 'session' ? props.sessionId : undefined
+      const [state, setState] = react.useState({ ready: false, cards: [], value: '' })
+
+      react.useEffect(() => {
+        let cancelled = false
+        const load = async () => {
+          const cards = await getJson('/cards')
+          if (cancelled || cards === undefined) return
+          const session = sessionId === undefined
+            ? undefined
+            : await getJson(`/session/${encodeURIComponent(sessionId)}`)
+          if (cancelled) return
+          setState({
+            ready: true,
+            cards: cards.cards ?? [],
+            value: initialSelection(mode, cards, session),
+          })
+        }
+        void load()
+        return () => { cancelled = true }
+      }, [mode, sessionId])
+
+      if (!state.ready) return react.createElement('span', null, '角色卡')
+
+      const choose = (next) => {
+        setState(previous => ({ ...previous, value: next }))
+        void postJson(
+          sessionId === undefined ? '/default' : `/session/${encodeURIComponent(sessionId)}/card`,
+          sessionId === undefined ? { cardId: next } : { cardId: next === '' ? null : next },
+        )
+      }
+
+      const options = state.cards.map(card =>
+        react.createElement('option', { key: card.id, value: card.id }, card.name ?? card.id))
+      if (sessionId !== undefined) {
+        options.unshift(react.createElement('option', { key: '__default', value: '' }, '跟随默认'))
+      }
+
       return react.createElement(
-        'div',
-        { style: { padding: '8px 0', lineHeight: 1.6 } },
-        react.createElement('p', { style: { margin: 0 } }, 'dsh-character-cards 已装载。'),
-        react.createElement(
-          'p',
-          { style: { margin: '4px 0 0', opacity: 0.7 } },
-          'P0 骨架：宿主与客户端两半均已激活，尚未接入角色卡。',
-        ),
+        'select',
+        { value: state.value, onChange: (event) => choose(event.target.value), title: '角色卡' },
+        options,
       )
     }
 
@@ -45,10 +132,10 @@ window.__ModuleLoader__.load({
       // it, which is how plugin entries disappear from the UI entirely.
       try {
         const slots = ctx.get('slots')
-        if (slots === undefined) return
+        if (slots === undefined || typeof slots.inject !== 'function') return
         slots.inject('plugins.row.config', () => slots.register(
           { name: 'plugins.row.config', key: 'dsh-character-cards#dsh-character-cards' },
-          CardSection,
+          CardSwitcher,
         ))
       } catch {
         // A missing or reshaped slot must degrade to "no card pane", never to
@@ -56,6 +143,6 @@ window.__ModuleLoader__.load({
       }
     }
 
-    return { apply }
+    return { apply, initialSelection, switcherMode }
   },
 })
