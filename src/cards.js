@@ -298,6 +298,24 @@ export function readDefaultCardId(dir) {
 }
 
 /**
+ * Point the global default at one card.
+ * @param {string} dir - library directory.
+ * @param {string} cardId - the card to default to.
+ * @param {Logger} logger - logger for failures.
+ * @returns {boolean} whether the pointer was written.
+ */
+export function setDefaultCardId(dir, cardId, logger) {
+  try {
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, DEFAULT_POINTER_NAME), `${cardId}\n`)
+    return true
+  } catch (error) {
+    logger.warn?.(`cannot write ${join(dir, DEFAULT_POINTER_NAME)}: ${String(error)}`)
+    return false
+  }
+}
+
+/**
  * Read the per-session override table.
  * @param {string} dir - library directory.
  * @param {Logger} logger - logger for failures.
@@ -401,6 +419,7 @@ export function listCardSummaries(dir, logger) {
       id,
       name: text(card.name) ?? null,
       description: text(card.description) ?? null,
+      chars: budgeted.text.length,
       tokens: budgeted.tokens,
       maxTokens: budgeted.maxTokens,
       truncated: budgeted.truncated,

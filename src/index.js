@@ -17,7 +17,17 @@
 
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { applyBudget, renderCard, text, loadCardLibrary, readDefaultCardId, readSessionOverrides, resolveCardId, renderCardById } from './cards.js'
+import {
+  listCardSummaries,
+  loadCardLibrary,
+  readDefaultCardId,
+  readSessionOverrides,
+  renderCardById,
+  resolveCardId,
+  setDefaultCardId,
+  setSessionOverride,
+  text,
+} from './cards.js'
 
 export const name = 'dsh-character-cards'
 
@@ -79,8 +89,16 @@ const diag = {
   orderResolved: null,
   /** Successfully bound agents, keyed by agent id. */
   bound: new Map(),
-  /** The fiber owning each agent's section registration, for disposal. */
-  fibers: new Map(),
+  /**
+   * Each agent's current registration, keyed by agent id.
+   *
+   * One entry holds both halves of one registration: the inject fiber that owns
+   * the deferred callback, and the section disposer that callback produced.
+   * Rebinding needs the section disposer, because calling it is what frees the
+   * `dshcd:identity` name synchronously; the fiber itself has nothing left to
+   * do by then and is disposed for tidiness.
+   */
+  registrations: new Map(),
   /**
    * The last few assembled prompts, newest first.
    *
@@ -132,6 +150,36 @@ function sendJson(res, status, body) {
     'content-length': Buffer.byteLength(payload),
   })
   res.end(payload)
+}
+
+/**
+ * Read a request body as text, refusing anything implausibly large.
+ * @param {import('node:http').IncomingMessage} req - incoming request.
+ * @returns {Promise<string>} the body text.
+ */
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    let data = ''
+    req.on('data', (chunk) => {
+      data += chunk
+      if (data.length > 1e6) req.destroy()
+    })
+    req.on('end', () => resolve(data))
+    req.on('error', reject)
+    req.on('aborted', () => reject(new Error('aborted')))
+  })
+}
+
+/**
+ * The request's pathname, ignoring any query string.
+ *
+ * The Web server matches routes on this same value and hands the original
+ * request through, so a prefix handler has to re-derive it.
+ * @param {import('node:http').IncomingMessage} req - incoming request.
+ * @returns {string} the pathname.
+ */
+function pathnameOf(req) {
+  return new URL(req.url ?? '/', 'http://x').pathname
 }
 
 /**
@@ -202,18 +250,59 @@ function resolveOrder(systemPrompt) {
  * @param {{ id: string, ctx: import('@deepseek-ai/cordis').Context }} agent - the created agent.
  * @param {{ warn?: (message: string) => void }} logger - logger for diagnostics.
  */
+/**
+ * Bind the active card to one agent's prompt section.
+ * @param {{ id: string, ctx: object }} agent - the created agent.
+ * @param {{ warn?: (message: string) => void }} logger - logger for diagnostics.
+ */
 function bindCard(agent, logger) {
   const resolved = resolveCardId(CARDS_DIR, agent.id, logger)
-  if (resolved === undefined) return
-  const rendered = renderCardById(CARDS_DIR, resolved.cardId, logger)
-  if (rendered === undefined) return
-  const fiber = agent.ctx.inject(['systemPrompt'], (scope) => {
+  const rendered = resolved === undefined
+    ? undefined
+    : renderCardById(CARDS_DIR, resolved.cardId, logger)
+  registerSection(
+    agent,
+    rendered === undefined ? undefined : { ...rendered, source: resolved.source },
+    logger,
+  )
+}
+
+/**
+ * Register a rendered card on one live agent, replacing any previous one.
+ *
+ * The previous section disposer is called SYNCHRONOUSLY, so the
+ * `dshcd:identity` name is free before the replacement can land. The
+ * replacement itself must go through `ctx.inject`, whose callback Cordis
+ * always defers by at least a microtask even when systemPrompt is already
+ * resolvable (vendor/cordis/src/fiber.ts:650), and reaching
+ * `agent.ctx.systemPrompt` directly is refused by the dependency guard. That
+ * leaves a one-microtask window in which an assembly would find no card; the
+ * spec's section 4.2 records why that is accepted rather than worked around.
+ * @param {{ id: string, ctx: object }} agent - the live agent.
+ * @param {object | undefined} rendered - rendered card (plus `source`), or undefined to leave the agent unbound.
+ * @param {{ warn?: (message: string) => void }} logger - logger for failures.
+ * @returns {object | undefined} the registration holder, once inject() has been called.
+ */
+function registerSection(agent, rendered, logger) {
+  const previous = diag.registrations.get(agent.id)
+  diag.registrations.delete(agent.id)
+  diag.bound.delete(agent.id)
+  if (previous !== undefined) {
+    try { previous.disposeSection?.() } catch (error) { recordError(error) }
+    try { void previous.fiber?.dispose?.() } catch (error) { recordError(error) }
+  }
+  if (rendered === undefined) return undefined
+
+  // The inject callback runs after this function returns, so it publishes into
+  // the holder rather than through a return value.
+  const registration = {}
+  registration.fiber = agent.ctx.inject(['systemPrompt'], (scope) => {
     // Recorded HERE, not after inject() returns. inject() may fire its callback
     // later or never, so a flag set outside would claim a registration that did
     // not happen - exactly the conflation this diagnostic exists to avoid.
     diag.injectCallbacks += 1
     try {
-      scope.systemPrompt.section({
+      registration.disposeSection = scope.systemPrompt.section({
         name: SECTION_NAME,
         order: resolveOrder(scope.systemPrompt),
         text: rendered.text,
@@ -222,7 +311,7 @@ function bindCard(agent, logger) {
       diag.bound.set(agent.id, {
         card: rendered.id,
         name: rendered.name,
-        source: resolved.source,
+        source: rendered.source ?? null,
         chars: rendered.text.length,
         tokens: rendered.tokens,
         maxTokens: rendered.maxTokens,
@@ -233,16 +322,74 @@ function bindCard(agent, logger) {
       logger.warn?.(`section() failed for agent ${agent.id}: ${String(error)}`)
     }
   })
-  diag.fibers.set(agent.id, fiber)
+  diag.registrations.set(agent.id, registration)
+  return registration
+}
+
+/**
+ * The card library as a picker sees it.
+ * @returns {{ defaultCard: string | null, cards: object[] }} the snapshot.
+ */
+function librarySnapshot() {
+  return {
+    defaultCard: readDefaultCardId(CARDS_DIR) ?? null,
+    cards: listCardSummaries(CARDS_DIR, {}),
+  }
+}
+
+/**
+ * How one session resolves its card right now.
+ *
+ * `override` is the raw per-session entry, which the picker needs separately
+ * from `cardId`: a session following the default still reports that default as
+ * its effective card, and only `override` distinguishes the two.
+ * @param {string} sessionId - the shared agent/session id.
+ * @returns {{ sessionId: string, cardId: string | null, source: string | null, override: string | null }} the session view.
+ */
+function sessionView(sessionId) {
+  const overrides = readSessionOverrides(CARDS_DIR, {})
+  const resolved = resolveCardId(CARDS_DIR, sessionId, {})
+  return {
+    sessionId,
+    cardId: resolved === undefined ? null : resolved.cardId,
+    source: resolved === undefined ? null : resolved.source,
+    override: Object.hasOwn(overrides, sessionId) ? overrides[sessionId] : null,
+  }
+}
+
+/**
+ * Re-resolve one live session's card and swap its prompt section in place.
+ *
+ * The new card is resolved and rendered BEFORE anything is disposed, so a
+ * failure here leaves the previous card in place - a session must never be left
+ * with no identity at all because a switch went wrong.
+ * @param {{ id: string, ctx: object }} agent - the live agent.
+ * @param {string} sessionId - the shared agent/session id.
+ * @param {{ warn?: (message: string) => void }} logger - logger for failures.
+ */
+function rebind(agent, sessionId, logger) {
+  let rendered
+  try {
+    const effective = resolveCardId(CARDS_DIR, sessionId, logger)
+    const card = effective === undefined
+      ? undefined
+      : renderCardById(CARDS_DIR, effective.cardId, logger)
+    rendered = card === undefined ? undefined : { ...card, source: effective.source }
+  } catch (error) {
+    recordError(error)
+    logger.warn?.(`resolving the new card for ${sessionId} failed; keeping the previous one: ${String(error)}`)
+    return
+  }
+  registerSection(agent, rendered, logger)
 }
 
 /**
  * Register this plugin's HTTP routes on a Web surface.
  * @param {{ register: (route: object) => () => void }} webServer - the Web server service.
- * @param {import('@deepseek-ai/cordis').Context} fiber - context owning the registration's lifetime.
+ * @param {import('@deepseek-ai/cordis').Context} ctx - context owning the registrations and serving the agent lookup.
  */
-function registerRoutes(webServer, fiber) {
-  fiber.effect(() => webServer.register({
+function registerRoutes(webServer, ctx) {
+  ctx.effect(() => webServer.register({
     kind: 'exact',
     path: `${ROUTE_PREFIX}/ping`,
     handler: (req, res) => {
@@ -251,31 +398,112 @@ function registerRoutes(webServer, fiber) {
     },
   }))
 
-  // Spike diagnostic. Distinguishes "the binding code never ran" from "it ran
-  // but the card's text did not reach the model", which no amount of reading
-  // the transcript can settle.
-  fiber.effect(() => webServer.register({
+  // What a picker needs to render itself.
+  ctx.effect(() => webServer.register({
+    kind: 'exact',
+    path: `${ROUTE_PREFIX}/cards`,
+    handler: (req, res) => {
+      if (!guard(req, res)) return
+      sendJson(res, 200, { ok: true, ...librarySnapshot() })
+    },
+  }))
+
+  // One session's card, and the write that changes it. A single registration
+  // serves both verbs because the route table rejects a duplicate (kind, path),
+  // and the matcher takes a prefix only when it equals the path or is followed
+  // by a slash - so this is registered without a trailing one.
+  ctx.effect(() => webServer.register({
+    kind: 'prefix',
+    path: `${ROUTE_PREFIX}/session`,
+    handler: async (req, res) => {
+      if (!guard(req, res)) return
+      const rest = pathnameOf(req).slice(`${ROUTE_PREFIX}/session`.length).replace(/^\//, '')
+      const sessionId = decodeURIComponent(rest.endsWith('/card') ? rest.slice(0, -'/card'.length) : rest)
+      if (sessionId.length === 0) {
+        sendJson(res, 400, { ok: false, code: 'invalid', error: 'session id required' })
+        return
+      }
+
+      if (req.method !== 'POST') {
+        sendJson(res, 200, { ok: true, ...sessionView(sessionId) })
+        return
+      }
+
+      const logger = ctx.logger ?? {}
+      let body = {}
+      try {
+        const raw = await readBody(req)
+        if (raw) body = JSON.parse(raw)
+      } catch {
+        sendJson(res, 400, { ok: false, code: 'invalid', error: 'malformed JSON body' })
+        return
+      }
+      // null clears the override, which is how a session goes back to following
+      // the default; a string pins it to that card.
+      const cardId = body.cardId === null ? null : text(body.cardId)
+      if (cardId === undefined) {
+        sendJson(res, 400, { ok: false, code: 'invalid', error: 'cardId must be a string or null' })
+        return
+      }
+      if (cardId !== null && !loadCardLibrary(CARDS_DIR, {}).has(cardId)) {
+        sendJson(res, 400, { ok: false, code: 'unknown-card', error: `no card "${cardId}"` })
+        return
+      }
+
+      const written = setSessionOverride(CARDS_DIR, sessionId, cardId, logger)
+      // A session with no live agent is not an error: the override is already
+      // on disk and takes effect when that session is next created or resumed.
+      const agent = ctx.get('agents')?.get(sessionId)
+      if (agent !== undefined) rebind(agent, sessionId, logger)
+      sendJson(res, 200, { ok: true, ...sessionView(sessionId), written, rebound: agent !== undefined })
+    },
+  }))
+
+  // The global default: the other half of what the switcher drives.
+  ctx.effect(() => webServer.register({
+    kind: 'exact',
+    path: `${ROUTE_PREFIX}/default`,
+    handler: async (req, res) => {
+      if (!guard(req, res)) return
+      if (req.method !== 'POST') {
+        sendJson(res, 405, { ok: false, code: 'method', error: 'POST only' })
+        return
+      }
+      let body = {}
+      try {
+        const raw = await readBody(req)
+        if (raw) body = JSON.parse(raw)
+      } catch {
+        sendJson(res, 400, { ok: false, code: 'invalid', error: 'malformed JSON body' })
+        return
+      }
+      const cardId = text(body.cardId)
+      if (cardId === undefined) {
+        sendJson(res, 400, { ok: false, code: 'invalid', error: 'cardId must be a non-empty string' })
+        return
+      }
+      if (!loadCardLibrary(CARDS_DIR, {}).has(cardId)) {
+        sendJson(res, 400, { ok: false, code: 'unknown-card', error: `no card "${cardId}"` })
+        return
+      }
+      const written = setDefaultCardId(CARDS_DIR, cardId, ctx.logger ?? {})
+      sendJson(res, 200, { ok: true, defaultCard: cardId, written })
+    },
+  }))
+
+  // Diagnostic. Distinguishes "the binding code never ran" from "it ran but the
+  // card's text did not reach the model", which no amount of reading the
+  // transcript can settle.
+  ctx.effect(() => webServer.register({
     kind: 'exact',
     path: `${ROUTE_PREFIX}/status`,
     handler: (req, res) => {
       if (!guard(req, res)) return
-      const cards = [...loadCardLibrary(CARDS_DIR, {})].map(([id, card]) => {
-        const budgeted = applyBudget(renderCard(card), card, id, {})
-        return {
-          id,
-          name: text(card.name) ?? null,
-          chars: budgeted.text.length,
-          tokens: budgeted.tokens,
-          maxTokens: budgeted.maxTokens,
-          truncated: budgeted.truncated,
-        }
-      })
       sendJson(res, 200, {
         ok: true,
         cardsDir: CARDS_DIR,
-        defaultCard: readDefaultCardId(CARDS_DIR) ?? null,
         sessionOverrides: readSessionOverrides(CARDS_DIR, {}),
-        cards,
+        ...librarySnapshot(),
         agentsAtLoad: diag.agentsAtLoad,
         subscribed: diag.subscribed,
         listenerCalls: diag.listenerCalls,
@@ -310,13 +538,11 @@ function subscribe(ctx) {
   })
   ctx.on('agent/disposed', ({ agent }) => {
     diag.bound.delete(agent.id)
-    const fiber = diag.fibers.get(agent.id)
-    diag.fibers.delete(agent.id)
-    try {
-      void fiber?.dispose?.()
-    } catch (error) {
-      recordError(error)
-    }
+    const registration = diag.registrations.get(agent.id)
+    diag.registrations.delete(agent.id)
+    if (registration === undefined) return
+    try { registration.disposeSection?.() } catch (error) { recordError(error) }
+    try { void registration.fiber?.dispose?.() } catch (error) { recordError(error) }
   })
 
   // Waterfall: observe the prompt actually assembled for one model step. This
