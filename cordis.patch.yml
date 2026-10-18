@@ -1,0 +1,6 @@
+# dsh-character-cards bundle patch: inserts the plugin row into the profile
+# roster. The node half serves the /dsh-character-cards/* JSON routes; the
+# browser half (exports "./client") contributes the card surfaces.
+- insert:
+    - id: dsh-character-cards
+      name: 'dsh-character-cards'
