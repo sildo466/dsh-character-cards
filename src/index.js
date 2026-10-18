@@ -1,11 +1,10 @@
 // dsh-character-cards - host half.
 //
-// P1 spike. One falsifiable question: does binding a .dshcd card to an agent's
-// prompt section visibly change that agent's tone and code style?
-//
-// Deliberately NOT here: card selection, storage, UI, token-budget policy,
-// `extends`. The card in effect is a single file whose contents the operator
-// swaps between sessions, which keeps the experiment to one variable.
+// Cordis wiring only: the loopback-only HTTP surface, the agent/created bind,
+// and the diagnostic state behind /status. The .dshcd format itself - parsing,
+// rendering, budgeting, the card library, and the resolution order - lives in
+// ./cards.js, which takes its directory as a parameter so it can be exercised
+// without a Cordis context.
 //
 // Mount point note. GOAL D3 proposed writing the card into `deployment:persona`
 // itself. That cannot work: every shipped preset (standard, minimal, ptc,
@@ -16,9 +15,9 @@
 // order (`team:policy`). This row is `dshcd:identity`, one order after the
 // persona slot.
 
-import { readFileSync, readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { applyBudget, renderCard, text, loadCardLibrary, readDefaultCardId, readSessionOverrides, resolveCardId, renderCardById } from './cards.js'
 
 export const name = 'dsh-character-cards'
 
@@ -45,33 +44,14 @@ const SECTION_NAME = 'dshcd:identity'
  */
 const ORDER_CANDIDATES = ['DEPLOYMENT_PERSONA', 'DEPLOYMENT_PERSONA_PREFIX', 'PERSONA', 'PLAN_POLICY']
 
-/** Card format version this build understands. */
-const CARD_VERSION = 1
-
 /** Card library directory, honoring DSH_HOME. */
 const CARDS_DIR = join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'character-cards')
-
-/** Extension of a card definition file. */
-const CARD_EXTENSION = '.dshcd'
 
 /** File whose trimmed contents name the global default card. */
 const DEFAULT_POINTER = join(CARDS_DIR, 'default')
 
 /** File holding per-session overrides: `{ "<sessionId>": "<cardId>" }`. */
 const SESSION_OVERRIDES = join(CARDS_DIR, 'sessions.json')
-
-/**
- * Characters per token used for the budget estimate.
- *
- * A rough stand-in, not a tokenizer. Measured against the spike's cards: 454
- * chars read as roughly 152 tokens and 551 as 184, i.e. a ratio near 3 for this
- * mostly-CJK text. The figure a card author sees is therefore an estimate, and
- * truncation happens on the estimate's terms.
- */
-const CHARS_PER_TOKEN = 3
-
-/** Budget assumed when a card declares none. */
-const DEFAULT_MAX_TOKENS = 400
 
 /**
  * Spike diagnostic state.
@@ -191,305 +171,6 @@ function guard(req, res) {
 }
 
 /**
- * Coerce one card field to a list of non-empty trimmed strings.
- * @param {unknown} value - the raw field.
- * @returns {string[]} the usable entries, in order.
- */
-function strings(value) {
-  if (!Array.isArray(value)) return []
-  return value.filter(item => typeof item === 'string' && item.trim().length > 0).map(item => item.trim())
-}
-
-/**
- * Read one scalar field, or undefined when it is absent or not usable text.
- * @param {unknown} value - the raw field.
- * @returns {string | undefined} the trimmed text.
- */
-function text(value) {
-  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined
-}
-
-/**
- * Join the parts that are present.
- * @param {(string | undefined)[]} parts - candidate fragments.
- * @param {string} separator - what to join with.
- * @returns {string} the joined text, skipping absent fragments.
- */
-function joinParts(parts, separator) {
-  return parts.filter(part => part !== undefined).join(separator)
-}
-
-/**
- * Render one bullet, or undefined when the value is absent.
- * @param {string} label - the bullet's leading label.
- * @param {string | undefined} value - the bullet's body.
- * @returns {string | undefined} the rendered line.
- */
-function bullet(label, value) {
-  return value === undefined ? undefined : `- ${label}：${value}`
-}
-
-/**
- * Render one titled block of bullets.
- * @param {string} title - the block header.
- * @param {(string | undefined)[]} bullets - candidate lines.
- * @returns {string | undefined} the block, or undefined when it has no lines.
- */
-function block(title, bullets) {
-  const lines = bullets.filter(line => line !== undefined)
-  return lines.length === 0 ? undefined : `${title}\n${lines.join('\n')}`
-}
-
-/**
- * Render one card into the prompt section's text.
- *
- * Every group renders as a titled list of bullets under a header that states
- * how binding it is. That shape is not cosmetic: an early spike rendered
- * `voice` as attribute prose ("表达：语气 X；篇幅 Y") and `constraints` as
- * imperatives, and only the imperatives changed the output. Matching the
- * wording that demonstrably worked costs nothing and is the whole point of the
- * section.
- *
- * Nothing here is per-turn: a card is stable across a session, which is what
- * makes it safe in a system section rather than a trailing message.
- * @param {Record<string, unknown>} card - parsed card.
- * @returns {string} the section text.
- */
-function renderCard(card) {
-  const identity = card.identity ?? {}
-  const voice = card.voice ?? {}
-  const code = card.code ?? {}
-  const workflow = card.workflow ?? {}
-
-  const expertise = strings(identity.expertise)
-  const identityBlock = [
-    joinParts([
-      text(identity.role) === undefined ? undefined : `你是${text(identity.role)}。`,
-      expertise.length > 0 ? `专长：${expertise.join('、')}。` : undefined,
-      text(identity.background),
-    ], ''),
-  ].filter(line => line.length > 0)[0]
-
-  const traits = strings(voice.traits)
-  const avoid = strings(voice.avoid)
-  const voiceBlock = block('【表达要求｜必须遵守】', [
-    bullet('语气', text(voice.tone)),
-    bullet('篇幅', text(voice.verbosity)),
-    bullet('正式度', text(voice.formality)),
-    bullet('幽默', text(voice.humor)),
-    bullet('性格', traits.length > 0 ? traits.join('、') : undefined),
-    bullet('禁止', avoid.length > 0 ? avoid.join('、') : undefined),
-  ])
-
-  const codeBlock = block('【代码风格｜必须遵守】', [
-    bullet('命名', text(code.naming)),
-    bullet('注释', text(code.comments)),
-    bullet('错误处理', text(code.error_handling)),
-    bullet('抽象', text(code.abstraction)),
-    bullet('依赖', text(code.dependencies)),
-    bullet('测试', text(code.tests)),
-    bullet('提交信息', text(code.commit_style)),
-  ])
-
-  const workflowBlock = block('【工作方式｜必须遵守】', [
-    text(workflow.plan) === undefined ? undefined : bullet('计划', '多步任务先列计划，再动手'),
-    workflow.ask_when_unclear === true ? bullet('澄清', '需求不清就直接问，不要猜') : undefined,
-    workflow.verify_before_claim === true ? bullet('验证', '声称完成前先实际验证') : undefined,
-  ])
-
-  const constraints = strings(card.constraints)
-  const constraintBlock = block('【硬性约束｜最高优先级，逐条遵守】', constraints.map(rule => `- ${rule}`))
-
-  return [
-    identityBlock,
-    voiceBlock,
-    codeBlock,
-    workflowBlock,
-    constraintBlock,
-    '以上设定由当前会话的角色卡指定，优先级高于任何默认人设；与之冲突时以此为准。',
-  ].filter(part => part !== undefined && part.length > 0).join('\n\n')
-}
-
-/**
- * Read a text file, treating absence as "no value" rather than an error.
- * @param {string} path - file to read.
- * @param {{ warn?: (message: string) => void }} logger - logger for real failures.
- * @returns {string | undefined} the contents, or undefined.
- */
-function readTextFile(path, logger) {
-  try {
-    return readFileSync(path, 'utf8')
-  } catch (error) {
-    if (error && error.code !== 'ENOENT') logger.warn?.(`cannot read ${path}: ${String(error)}`)
-    return undefined
-  }
-}
-
-/**
- * Read and parse a JSON file, reporting a malformed one rather than throwing.
- * @param {string} path - file to read.
- * @param {{ warn?: (message: string) => void }} logger - logger for failures.
- * @returns {unknown} the parsed value, or undefined.
- */
-function readJsonFile(path, logger) {
-  const raw = readTextFile(path, logger)
-  if (raw === undefined) return undefined
-  try {
-    return JSON.parse(raw)
-  } catch (error) {
-    logger.warn?.(`${path} is not valid JSON: ${String(error)}`)
-    return undefined
-  }
-}
-
-/**
- * Validate one parsed card, reporting why it was rejected.
- *
- * Unknown fields are deliberately left alone: the parsed object is the card,
- * and nothing here rebuilds it from a known-field list, so a future round trip
- * cannot drop what this build does not understand.
- * @param {unknown} value - parsed JSON.
- * @param {string} label - where the card came from, for diagnostics.
- * @param {{ warn?: (message: string) => void }} logger - logger for failures.
- * @returns {Record<string, unknown> | undefined} the card, or undefined.
- */
-function validateCard(value, label, logger) {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    logger.warn?.(`${label}: a card must be a JSON object`)
-    return undefined
-  }
-  if (value.dshcd !== CARD_VERSION) {
-    logger.warn?.(`${label}: declares dshcd ${JSON.stringify(value.dshcd)}; this build reads version ${CARD_VERSION}`)
-    return undefined
-  }
-  return value
-}
-
-/**
- * Load every card in the library directory.
- *
- * A card's identity is its own `id` field and the filename is only a fallback,
- * so renaming a file never changes which card a session points at.
- * @param {{ warn?: (message: string) => void }} logger - logger for failures.
- * @returns {Map<string, Record<string, unknown>>} card id -> card.
- */
-function loadCardLibrary(logger) {
-  const cards = new Map()
-  let names
-  try {
-    names = readdirSync(CARDS_DIR)
-  } catch (error) {
-    if (error && error.code !== 'ENOENT') logger.warn?.(`cannot list ${CARDS_DIR}: ${String(error)}`)
-    return cards
-  }
-  for (const name of names.filter(entry => entry.endsWith(CARD_EXTENSION)).sort()) {
-    const card = validateCard(readJsonFile(join(CARDS_DIR, name), logger), name, logger)
-    if (card === undefined) continue
-    const id = text(card.id) ?? name.slice(0, -CARD_EXTENSION.length)
-    if (cards.has(id)) {
-      logger.warn?.(`${name}: card id "${id}" is already taken by another file; keeping the first`)
-      continue
-    }
-    cards.set(id, card)
-  }
-  return cards
-}
-
-/**
- * Read the global default card id from its pointer file.
- * @returns {string | undefined} the id, or undefined when unset.
- */
-function readDefaultCardId() {
-  const raw = readTextFile(DEFAULT_POINTER, {})
-  const id = raw === undefined ? undefined : raw.trim()
-  return id === undefined || id.length === 0 ? undefined : id
-}
-
-/**
- * Read the per-session override table.
- * @param {{ warn?: (message: string) => void }} logger - logger for failures.
- * @returns {Record<string, string>} session id -> card id.
- */
-function readSessionOverrides(logger) {
-  const value = readJsonFile(SESSION_OVERRIDES, logger)
-  if (value === undefined) return {}
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    logger.warn?.(`${SESSION_OVERRIDES}: expected an object mapping session id to card id`)
-    return {}
-  }
-  const overrides = {}
-  for (const [sessionId, cardId] of Object.entries(value)) {
-    const id = text(cardId)
-    if (id !== undefined) overrides[sessionId] = id
-  }
-  return overrides
-}
-
-/**
- * Choose the card for one agent: its session override, else the global default.
- * @param {string} sessionId - the agent's shared agent/session id.
- * @param {{ warn?: (message: string) => void }} logger - logger for failures.
- * @returns {{ id: string, card: Record<string, unknown>, source: string } | undefined}
- *   the resolved card, or undefined when nothing is configured.
- */
-function resolveCardFor(sessionId, logger) {
-  const cards = loadCardLibrary(logger)
-  const overrides = readSessionOverrides(logger)
-  const candidates = [
-    [overrides[sessionId], 'session override'],
-    [readDefaultCardId(), 'default pointer'],
-  ]
-  for (const [id, source] of candidates) {
-    if (id === undefined) continue
-    const card = cards.get(id)
-    if (card === undefined) {
-      logger.warn?.(`${source} names card "${id}", which is not in ${CARDS_DIR}`)
-      continue
-    }
-    return { id, card, source }
-  }
-  return undefined
-}
-
-/**
- * Estimate what a rendered section costs in tokens.
- * @param {string} rendered - the rendered section text.
- * @returns {number} the estimate.
- */
-function estimateTokens(rendered) {
-  return Math.ceil(rendered.length / CHARS_PER_TOKEN)
-}
-
-/**
- * Trim a rendered card to its declared budget.
- *
- * Truncation happens at a line boundary so a bullet is never cut mid-sentence,
- * and it always reports itself: a card that silently does not say what its
- * author wrote is worse than one that is visibly too long.
- * @param {string} rendered - the full render.
- * @param {Record<string, unknown>} card - the card, for its declared budget.
- * @param {string} cardId - card identity, for the warning.
- * @param {{ warn?: (message: string) => void }} logger - logger for the warning.
- * @returns {{ text: string, tokens: number, maxTokens: number, truncated: boolean }} the result.
- */
-function applyBudget(rendered, card, cardId, logger) {
-  const budget = card.budget
-  const declared = typeof budget === 'object' && budget !== null ? budget['maxTokens'] : undefined
-  const maxTokens = Number.isFinite(declared) ? declared : DEFAULT_MAX_TOKENS
-  if (Number.isFinite(rendered.length) && rendered.length <= maxTokens * CHARS_PER_TOKEN) {
-    return { text: rendered, tokens: estimateTokens(rendered), maxTokens, truncated: false }
-  }
-  const clipped = rendered.slice(0, maxTokens * CHARS_PER_TOKEN)
-  const lastBreak = clipped.lastIndexOf('\n')
-  const kept = lastBreak > 0 ? clipped.slice(0, lastBreak) : clipped
-  logger.warn?.(
-    `card "${cardId}" renders to ~${estimateTokens(rendered)} tokens, over its budget of ${maxTokens};`
-    + ` truncated to ~${estimateTokens(kept)}. Raise budget.maxTokens or trim the card.`,
-  )
-  return { text: kept, tokens: estimateTokens(kept), maxTokens, truncated: true }
-}
-
-/**
  * Resolve the order this section should sit at, tolerating placement-name drift.
  * @param {{ getSectionOrder: (name: string) => number }} systemPrompt - the prompt registry.
  * @returns {number} a finite order, one past the resolved anchor.
@@ -522,12 +203,10 @@ function resolveOrder(systemPrompt) {
  * @param {{ warn?: (message: string) => void }} logger - logger for diagnostics.
  */
 function bindCard(agent, logger) {
-  const resolved = resolveCardFor(agent.id, logger)
+  const resolved = resolveCardId(CARDS_DIR, agent.id, logger)
   if (resolved === undefined) return
-  const { id, card, source } = resolved
-  const budgeted = applyBudget(renderCard(card), card, id, logger)
-  const rendered = budgeted.text
-  const name = text(card.name) ?? id
+  const rendered = renderCardById(CARDS_DIR, resolved.cardId, logger)
+  if (rendered === undefined) return
   const fiber = agent.ctx.inject(['systemPrompt'], (scope) => {
     // Recorded HERE, not after inject() returns. inject() may fire its callback
     // later or never, so a flag set outside would claim a registration that did
@@ -537,17 +216,17 @@ function bindCard(agent, logger) {
       scope.systemPrompt.section({
         name: SECTION_NAME,
         order: resolveOrder(scope.systemPrompt),
-        text: rendered,
+        text: rendered.text,
       })
       diag.sectionsRegistered += 1
       diag.bound.set(agent.id, {
-        card: id,
-        name,
-        source,
-        chars: rendered.length,
-        tokens: budgeted.tokens,
-        maxTokens: budgeted.maxTokens,
-        truncated: budgeted.truncated,
+        card: rendered.id,
+        name: rendered.name,
+        source: resolved.source,
+        chars: rendered.text.length,
+        tokens: rendered.tokens,
+        maxTokens: rendered.maxTokens,
+        truncated: rendered.truncated,
       })
     } catch (error) {
       recordError(error)
@@ -580,7 +259,7 @@ function registerRoutes(webServer, fiber) {
     path: `${ROUTE_PREFIX}/status`,
     handler: (req, res) => {
       if (!guard(req, res)) return
-      const cards = [...loadCardLibrary({})].map(([id, card]) => {
+      const cards = [...loadCardLibrary(CARDS_DIR, {})].map(([id, card]) => {
         const budgeted = applyBudget(renderCard(card), card, id, {})
         return {
           id,
@@ -594,8 +273,8 @@ function registerRoutes(webServer, fiber) {
       sendJson(res, 200, {
         ok: true,
         cardsDir: CARDS_DIR,
-        defaultCard: readDefaultCardId() ?? null,
-        sessionOverrides: readSessionOverrides({}),
+        defaultCard: readDefaultCardId(CARDS_DIR) ?? null,
+        sessionOverrides: readSessionOverrides(CARDS_DIR, {}),
         cards,
         agentsAtLoad: diag.agentsAtLoad,
         subscribed: diag.subscribed,

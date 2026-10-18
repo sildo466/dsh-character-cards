@@ -4,6 +4,9 @@
   "description": "Switchable identity cards (.dshcd) for DSH agents: tone, persona, and code style bound to one session's prompt section.",
   "type": "module",
   "main": "src/index.js",
+  "scripts": {
+    "test": "node --test"
+  },
   "exports": {
     ".": "./src/index.js",
     "./client": "./src/client.js",
