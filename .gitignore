@@ -1,0 +1,9 @@
+node_modules/
+*.log
+.DS_Store
+
+# Local machine config: contains absolute paths, not project policy.
+.claude/settings.local.json
+
+# Brainstorming visual companion scratch space.
+.superpowers/
