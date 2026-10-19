@@ -126,8 +126,7 @@ window.__ModuleLoader__.load({
         { key: entry.id, style: { display: 'flex', gap: '12px', padding: '4px 0' } },
         react.createElement('span', { style: { flex: 1, minWidth: 0 } }, entry.name ?? entry.id),
         react.createElement('span', { style: { opacity: 0.7, whiteSpace: 'nowrap' } },
-          `${entry.tokens} / ${entry.maxTokens} token`),
-        entry.truncated ? react.createElement('span', { style: { opacity: 0.7 } }, '已截断') : null,
+          `${entry.tokens} token`),
       ))
 
       return react.createElement(

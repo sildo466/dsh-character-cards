@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { applyBudget, renderCard, validateCard } from '../src/cards.js'
+import { inspectCard, measure, renderCard, validateCard } from '../src/cards.js'
 
 /** Silences the warnings a test expects, and records them. */
 function collector() {
@@ -33,28 +33,23 @@ test('renderCard always ends with the precedence line', () => {
   assert.match(renderCard({}), /优先级高于任何默认人设/)
 })
 
-test('applyBudget passes a card within budget through untouched', () => {
-  const logger = collector()
-  const result = applyBudget('short', { budget: { maxTokens: 400 } }, 'c', logger)
-  assert.equal(result.text, 'short')
-  assert.equal(result.truncated, false)
-  assert.equal(result.maxTokens, 400)
-  assert.deepEqual(logger.warnings, [])
+test('measure reports size without ever trimming', () => {
+  const short = measure('short')
+  assert.deepEqual(short, { chars: 5, tokens: 2 })
+
+  // The old budget truncated from the tail, which is exactly where constraints
+  // live. Measuring must never change the text.
+  const long = 'x'.repeat(5000)
+  assert.deepEqual(measure(long), { chars: 5000, tokens: 1667 })
 })
 
-test('applyBudget truncates at a line boundary and warns rather than staying silent', () => {
-  const logger = collector()
-  const rendered = `${'x'.repeat(20)}\n${'y'.repeat(20)}\n${'z'.repeat(20)}`
-  const result = applyBudget(rendered, { budget: { maxTokens: 10 } }, 'big', logger)
-  assert.equal(result.truncated, true)
-  assert.equal(result.text, 'x'.repeat(20))
-  assert.equal(logger.warnings.length, 1)
-  assert.match(logger.warnings[0], /card "big" renders to ~\d+ tokens, over its budget of 10/)
-})
-
-test('applyBudget falls back to the default budget when the card declares none', () => {
-  const result = applyBudget('short', {}, 'c', collector())
-  assert.equal(result.maxTokens, 400)
+test('inspectCard returns the reason instead of logging it', () => {
+  assert.deepEqual(inspectCard('nope'), { error: 'a card must be a JSON object' })
+  assert.deepEqual(inspectCard({ dshcd: 2 }), {
+    error: 'declares dshcd 2; this build reads version 1',
+  })
+  const card = { dshcd: 1, id: 'ok' }
+  assert.equal(inspectCard(card).card, card)
 })
 
 test('validateCard rejects a non-object, a wrong version, and accepts a v1 card', () => {
@@ -192,6 +187,8 @@ test('renderCardById renders a card by id and reports when one is missing', () =
   const rendered = renderCardById(dir, 'terse', collector())
   assert.equal(rendered.name, '简短审阅者')
   assert.match(rendered.text, /你是审阅者/)
+  assert.equal(rendered.chars, rendered.text.length)
+  assert.equal(rendered.tokens, Math.ceil(rendered.chars / 3))
 
   const logger = collector()
   assert.equal(renderCardById(dir, 'ghost', logger), undefined)
@@ -202,7 +199,7 @@ test('listCardSummaries reports every card with its estimated cost', () => {
   const dir = library({ 'terse.dshcd': TERSE, 'teacher.dshcd': TEACHER })
   const summaries = listCardSummaries(dir, collector())
   assert.deepEqual(summaries.map(entry => entry.id).sort(), ['teacher', 'terse'])
-  assert.equal(summaries[0].maxTokens, 400)
-  assert.equal(summaries[0].truncated, false)
   assert.ok(summaries[0].tokens > 0)
+  assert.equal(summaries[0].chars > 0, true)
+  assert.deepEqual(Object.keys(summaries[0]).sort(), ['chars', 'description', 'id', 'name', 'tokens'])
 })

@@ -1,5 +1,5 @@
 /**
- * The .dshcd card format: validating, rendering, and budgeting a card.
+ * The .dshcd card format: validating, rendering, and measuring a card.
  *
  * Every function takes the library directory it operates on rather than reading
  * a module-level constant, so tests drive real files in a temp directory while
@@ -19,17 +19,13 @@ export const CARD_VERSION = 1
 export const CARD_EXTENSION = '.dshcd'
 
 /**
- * Characters per token used for the budget estimate.
+ * Characters per token used for the size estimate.
  *
  * A rough stand-in, not a tokenizer. Measured against the example cards: 454
  * chars read as roughly 152 tokens and 551 as 184, i.e. a ratio near 3 for this
- * mostly-CJK text. The figure a card author sees is therefore an estimate, and
- * truncation happens on the estimate's terms.
+ * mostly-CJK text. The figure a card author sees is therefore an estimate.
  */
 export const CHARS_PER_TOKEN = 3
-
-/** Budget assumed when a card declares none. */
-export const DEFAULT_MAX_TOKENS = 400
 
 /**
  * Read one scalar field, or undefined when it is absent or not usable text.
@@ -152,6 +148,36 @@ export function renderCard(card) {
 }
 
 /**
+ * Measure a rendered card.
+ *
+ * This reports and never trims. The old budget truncated from the tail, and
+ * rendering puts constraints and the precedence line there - so exceeding a
+ * budget removed the part of a card most likely to change behaviour. The
+ * figure is characters divided by CHARS_PER_TOKEN, an estimate rather than a
+ * tokenizer, and it is shown as information rather than enforced (GOAL D11).
+ * @param {string} rendered - the rendered section text.
+ * @returns {{ chars: number, tokens: number }} the estimate.
+ */
+export function measure(rendered) {
+  return { chars: rendered.length, tokens: Math.ceil(rendered.length / CHARS_PER_TOKEN) }
+}
+
+/**
+ * Check one parsed card and hand back the reason when it is not usable.
+ * @param {unknown} value - parsed JSON.
+ * @returns {{ card: Record<string, unknown> } | { error: string }} the card, or why not.
+ */
+export function inspectCard(value) {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return { error: 'a card must be a JSON object' }
+  }
+  if (value.dshcd !== CARD_VERSION) {
+    return { error: `declares dshcd ${JSON.stringify(value.dshcd)}; this build reads version ${CARD_VERSION}` }
+  }
+  return { card: value }
+}
+
+/**
  * Validate one parsed card, reporting why it was rejected.
  *
  * Unknown fields are deliberately left alone: the parsed object is the card,
@@ -163,53 +189,12 @@ export function renderCard(card) {
  * @returns {Record<string, unknown> | undefined} the card, or undefined.
  */
 export function validateCard(value, label, logger) {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    logger.warn?.(`${label}: a card must be a JSON object`)
+  const inspected = inspectCard(value)
+  if ('error' in inspected) {
+    logger.warn?.(`${label}: ${inspected.error}`)
     return undefined
   }
-  if (value.dshcd !== CARD_VERSION) {
-    logger.warn?.(`${label}: declares dshcd ${JSON.stringify(value.dshcd)}; this build reads version ${CARD_VERSION}`)
-    return undefined
-  }
-  return value
-}
-
-/**
- * Estimate what a rendered section costs in tokens.
- * @param {string} rendered - the rendered section text.
- * @returns {number} the estimate.
- */
-function estimateTokens(rendered) {
-  return Math.ceil(rendered.length / CHARS_PER_TOKEN)
-}
-
-/**
- * Trim a rendered card to its declared budget.
- *
- * Truncation happens at a line boundary so a bullet is never cut mid-sentence,
- * and it always reports itself: a card that silently does not say what its
- * author wrote is worse than one that is visibly too long.
- * @param {string} rendered - the full render.
- * @param {Record<string, unknown>} card - the card, for its declared budget.
- * @param {string} cardId - card identity, for the warning.
- * @param {{ warn?: (message: string) => void }} logger - logger for the warning.
- * @returns {{ text: string, tokens: number, maxTokens: number, truncated: boolean }} the result.
- */
-export function applyBudget(rendered, card, cardId, logger) {
-  const budget = card.budget
-  const declared = typeof budget === 'object' && budget !== null ? budget['maxTokens'] : undefined
-  const maxTokens = Number.isFinite(declared) ? declared : DEFAULT_MAX_TOKENS
-  if (Number.isFinite(rendered.length) && rendered.length <= maxTokens * CHARS_PER_TOKEN) {
-    return { text: rendered, tokens: estimateTokens(rendered), maxTokens, truncated: false }
-  }
-  const clipped = rendered.slice(0, maxTokens * CHARS_PER_TOKEN)
-  const lastBreak = clipped.lastIndexOf('\n')
-  const kept = lastBreak > 0 ? clipped.slice(0, lastBreak) : clipped
-  logger.warn?.(
-    `card "${cardId}" renders to ~${estimateTokens(rendered)} tokens, over its budget of ${maxTokens};`
-    + ` truncated to ~${estimateTokens(kept)}. Raise budget.maxTokens or trim the card.`,
-  )
-  return { text: kept, tokens: estimateTokens(kept), maxTokens, truncated: true }
+  return inspected.card
 }
 
 /** Filename of the global default card pointer. */
@@ -425,11 +410,11 @@ export function resolveCardId(dir, sessionId, logger) {
 }
 
 /**
- * Render one library card by id, with its budget applied.
+ * Render one library card by id.
  * @param {string} dir - library directory.
  * @param {string} cardId - card to render.
  * @param {Logger} logger - logger for failures.
- * @returns {{ id: string, name: string, text: string, tokens: number, maxTokens: number, truncated: boolean } | undefined}
+ * @returns {{ id: string, name: string, text: string, chars: number, tokens: number } | undefined}
  *   the rendered card, or undefined when the library lacks it.
  */
 export function renderCardById(dir, cardId, logger) {
@@ -438,28 +423,25 @@ export function renderCardById(dir, cardId, logger) {
     logger.warn?.(`card "${cardId}" is not in ${dir}`)
     return undefined
   }
-  const budgeted = applyBudget(renderCard(card), card, cardId, logger)
-  return { id: cardId, name: text(card.name) ?? cardId, ...budgeted }
+  const rendered = renderCard(card)
+  return { id: cardId, name: text(card.name) ?? cardId, text: rendered, ...measure(rendered) }
 }
 
 /**
  * Summarize every card for a picker UI.
  * @param {string} dir - library directory.
  * @param {Logger} logger - logger for failures.
- * @returns {Array<{ id: string, name: string | null, description: string | null, tokens: number, maxTokens: number, truncated: boolean }>}
+ * @returns {Array<{ id: string, name: string | null, description: string | null, chars: number, tokens: number }>}
  *   one entry per card, in filename order.
  */
 export function listCardSummaries(dir, logger) {
   return [...loadCardLibrary(dir, logger)].map(([id, card]) => {
-    const budgeted = applyBudget(renderCard(card), card, id, logger)
+    const rendered = renderCard(card)
     return {
       id,
       name: text(card.name) ?? null,
       description: text(card.description) ?? null,
-      chars: budgeted.text.length,
-      tokens: budgeted.tokens,
-      maxTokens: budgeted.maxTokens,
-      truncated: budgeted.truncated,
+      ...measure(rendered),
     }
   })
 }

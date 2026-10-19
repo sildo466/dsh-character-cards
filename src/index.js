@@ -322,8 +322,6 @@ function registerSection(agent, rendered, logger) {
         source: rendered.source ?? null,
         chars: rendered.text.length,
         tokens: rendered.tokens,
-        maxTokens: rendered.maxTokens,
-        truncated: rendered.truncated,
       })
     } catch (error) {
       recordError(error)
