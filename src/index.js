@@ -43,6 +43,9 @@ export const name = 'dsh-character-cards'
 /** Route namespace owned by this plugin. */
 const ROUTE_PREFIX = '/dsh-character-cards'
 
+/** Paths the route table already owns, so they cannot also be card ids. */
+const RESERVED_CARD_IDS = new Set(['preview'])
+
 /**
  * Section name owned by this plugin. Not `PERSONA_SECTION` - see the mount
  * point note above.
@@ -493,6 +496,15 @@ function registerRoutes(webServer, ctx) {
       const id = text(inspected.card.id)
       if (id === undefined || !isValidCardId(id)) {
         sendJson(res, 400, { ok: false, code: 'invalid-id', error: 'id must match ^[a-z0-9][a-z0-9-]*$' })
+        return
+      }
+      // The exact /cards/preview route is matched before this plugin's prefix
+      // /cards route, so a card named `preview` would be creatable and listable
+      // but could never be opened or saved. Refuse it here, on the only verb
+      // that can reach create, rather than shipping a card that silently cannot
+      // be used.
+      if (RESERVED_CARD_IDS.has(id)) {
+        sendJson(res, 400, { ok: false, code: 'reserved-id', error: `"${id}" is reserved by the route table; pick another id` })
         return
       }
       if (cardExists(CARDS_DIR, id)) {

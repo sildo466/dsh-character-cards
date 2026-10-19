@@ -429,3 +429,13 @@ test('a malformed percent-escape answers 400 instead of throwing out of the hand
   assert.equal(session.body.code, 'invalid')
   assert.equal(session.body.error, 'session id required')
 })
+
+test('POST /cards refuses an id the route table already owns', async () => {
+  const res = await harness().call('/dsh-character-cards/cards', {
+    method: 'POST',
+    body: { card: { dshcd: 1, id: 'preview' } },
+  })
+  assert.equal(res.status, 400)
+  assert.equal(res.body.code, 'reserved-id')
+  assert.equal(cardExists(cardsDir, 'preview'), false)
+})
