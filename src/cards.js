@@ -169,6 +169,38 @@ export function measure(rendered) {
   return { chars: rendered.length, tokens: Math.ceil(rendered.length / CHARS_PER_TOKEN) }
 }
 
+/** Rules beyond this many start getting ignored under task pressure (GOAL D5). */
+const MAX_RULE_COUNT = 12
+
+/** A rule longer than this stops being a single checkable line (GOAL D5). */
+const MAX_RULE_LENGTH = 60
+
+/**
+ * D5 advisories for one card. They are advice, never a refusal.
+ * @param {Record<string, unknown>} card - the card.
+ * @returns {Array<{ code: string, message: string }>} the warnings, in a stable order.
+ */
+export function cardWarnings(card) {
+  const rules = Array.isArray(card.constraints)
+    ? card.constraints.filter(rule => typeof rule === 'string' && rule.trim().length > 0)
+    : []
+  const warnings = []
+  if (rules.length > MAX_RULE_COUNT) {
+    warnings.push({
+      code: 'too-many-rules',
+      message: `硬性约束 ${rules.length} 条，建议 ≤ ${MAX_RULE_COUNT}。规则一多，模型在任务压力下会开始忽略。`,
+    })
+  }
+  const longest = rules.reduce((worst, rule) => (rule.length > worst.length ? rule : worst), '')
+  if (longest.length > MAX_RULE_LENGTH) {
+    warnings.push({
+      code: 'rule-too-long',
+      message: `有一条约束 ${longest.length} 字，建议单行 ≤ ${MAX_RULE_LENGTH} 字。`,
+    })
+  }
+  return warnings
+}
+
 /**
  * Check one parsed card and hand back the reason when it is not usable.
  * @param {unknown} value - parsed JSON.

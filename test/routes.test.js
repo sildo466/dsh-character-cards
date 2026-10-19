@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { readDefaultCardId, readSessionOverrides } from '../src/cards.js'
+import { cardExists, readCardFile, readDefaultCardId, readSessionOverrides, writeCardFile } from '../src/cards.js'
 
 // CARDS_DIR is resolved from DSH_HOME when index.js is evaluated, so the temp
 // home must be built and exported before the dynamic import below.
@@ -270,4 +270,96 @@ test('every route refuses a request that is not from this machine', async () => 
     const res = await harness().call(path, { host: 'evil.example.com' })
     assert.equal(res.status, 403, `${path} should refuse a foreign Host header`)
   }
+})
+
+test('POST /cards/preview reports validity, size, and D5 advisories', async () => {
+  const routes = harness()
+
+  const valid = await routes.call('/dsh-character-cards/cards/preview', {
+    method: 'POST',
+    body: { card: { dshcd: 1, id: 'p', identity: { role: '审阅者' } } },
+  })
+  assert.equal(valid.body.valid, true)
+  assert.ok(valid.body.chars > 0)
+  assert.equal(valid.body.tokens, Math.ceil(valid.body.chars / 3))
+  assert.deepEqual(valid.body.warnings, [])
+
+  const invalid = await routes.call('/dsh-character-cards/cards/preview', {
+    method: 'POST',
+    body: { card: { dshcd: 2 } },
+  })
+  assert.equal(invalid.body.valid, false)
+  assert.match(invalid.body.error, /declares dshcd 2/)
+})
+
+test('POST /cards/preview warns past 12 rules and past 60 characters', async () => {
+  const rules = Array.from({ length: 13 }, (_, index) => `rule ${index}`)
+  rules[0] = 'x'.repeat(61)
+  const res = await harness().call('/dsh-character-cards/cards/preview', {
+    method: 'POST',
+    body: { card: { dshcd: 1, id: 'p', constraints: rules } },
+  })
+  const codes = res.body.warnings.map(warning => warning.code).sort()
+  assert.deepEqual(codes, ['rule-too-long', 'too-many-rules'])
+})
+
+test('POST /cards creates a card and refuses to overwrite an existing one', async () => {
+  const card = { dshcd: 1, id: 'brand-new', name: '新卡' }
+  const created = await harness().call('/dsh-character-cards/cards', { method: 'POST', body: { card } })
+  assert.equal(created.status, 200)
+  assert.equal(created.body.id, 'brand-new')
+  assert.equal(cardExists(cardsDir, 'brand-new'), true)
+
+  const again = await harness().call('/dsh-character-cards/cards', { method: 'POST', body: { card } })
+  assert.equal(again.status, 409)
+  assert.equal(again.body.code, 'exists')
+})
+
+test('POST /cards refuses an unsafe id', async () => {
+  const res = await harness().call('/dsh-character-cards/cards', {
+    method: 'POST',
+    body: { card: { dshcd: 1, id: '../escape' } },
+  })
+  assert.equal(res.status, 400)
+  assert.equal(res.body.code, 'invalid-id')
+})
+
+test('PUT /cards/<id> updates in place and rejects a mismatched id', async () => {
+  const card = { dshcd: 1, id: 'editable', name: '第一版', futureField: { keep: true } }
+  writeCardFile(cardsDir, card, {})
+
+  const updated = { ...card, name: '第二版' }
+  const res = await harness().call('/dsh-character-cards/cards/editable', {
+    method: 'PUT',
+    body: { card: updated },
+  })
+  assert.equal(res.status, 200)
+  const read = readCardFile(cardsDir, 'editable', {})
+  assert.equal(read.name, '第二版')
+  assert.deepEqual(read.futureField, { keep: true })
+
+  const mismatch = await harness().call('/dsh-character-cards/cards/editable', {
+    method: 'PUT',
+    body: { card: { ...card, id: 'something-else' } },
+  })
+  assert.equal(mismatch.status, 400)
+  assert.equal(mismatch.body.code, 'id-mismatch')
+})
+
+test('PUT /cards/<id> returns 404 when the file is gone', async () => {
+  const res = await harness().call('/dsh-character-cards/cards/never-existed', {
+    method: 'PUT',
+    body: { card: { dshcd: 1, id: 'never-existed' } },
+  })
+  assert.equal(res.status, 404)
+  assert.equal(res.body.code, 'not-found')
+})
+
+test('GET /cards/<id> returns the raw card', async () => {
+  writeCardFile(cardsDir, { dshcd: 1, id: 'raw', name: '原始', futureField: [1, 2] }, {})
+  const res = await harness().call('/dsh-character-cards/cards/raw')
+  assert.deepEqual(res.body.card, { dshcd: 1, id: 'raw', name: '原始', futureField: [1, 2] })
+
+  const missing = await harness().call('/dsh-character-cards/cards/nope')
+  assert.equal(missing.status, 404)
 })

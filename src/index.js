@@ -18,16 +18,24 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import {
+  cardExists,
+  cardWarnings,
   clearSessionOverride,
+  inspectCard,
+  isValidCardId,
   listCardSummaries,
   loadCardLibrary,
+  measure,
+  readCardFile,
   readDefaultCardId,
   readSessionOverrides,
+  renderCard,
   renderCardById,
   resolveCardId,
   setDefaultCardId,
   setSessionOverride,
   text,
+  writeCardFile,
 } from './cards.js'
 
 export const name = 'dsh-character-cards'
@@ -401,13 +409,147 @@ function registerRoutes(webServer, ctx) {
     },
   }))
 
-  // What a picker needs to render itself.
+  // What a picker needs to render itself, and the create that adds to it. One
+  // registration serves both verbs: the route table rejects a duplicate
+  // (kind, path), so the list and the create could not be two rows.
+  //
+  // Create is separate from update so that an id collision is a 409 rather than
+  // a silent overwrite.
   ctx.effect(() => webServer.register({
     kind: 'exact',
     path: `${ROUTE_PREFIX}/cards`,
-    handler: (req, res) => {
+    handler: async (req, res) => {
       if (!guard(req, res)) return
-      sendJson(res, 200, { ok: true, ...librarySnapshot() })
+      if (req.method !== 'POST') {
+        sendJson(res, 200, { ok: true, ...librarySnapshot() })
+        return
+      }
+      let body = {}
+      try {
+        const raw = await readBody(req)
+        if (raw) body = JSON.parse(raw)
+      } catch {
+        sendJson(res, 400, { ok: false, code: 'invalid', error: 'malformed JSON body' })
+        return
+      }
+      const inspected = inspectCard(body.card)
+      if ('error' in inspected) {
+        sendJson(res, 400, { ok: false, code: 'invalid', error: inspected.error })
+        return
+      }
+      const id = text(inspected.card.id)
+      if (id === undefined || !isValidCardId(id)) {
+        sendJson(res, 400, { ok: false, code: 'invalid-id', error: 'id must match ^[a-z0-9][a-z0-9-]*$' })
+        return
+      }
+      if (cardExists(CARDS_DIR, id)) {
+        sendJson(res, 409, { ok: false, code: 'exists', error: `card "${id}" already exists` })
+        return
+      }
+      const written = writeCardFile(CARDS_DIR, inspected.card, ctx.logger ?? {})
+      if (!written.ok) {
+        sendJson(res, 400, { ok: false, code: written.code, error: written.error })
+        return
+      }
+      sendJson(res, 200, { ok: true, id })
+    },
+  }))
+
+  // Draft validation. The client sends the card it has built; the host answers
+  // with what this build thinks of it. Format rules live only here, so the
+  // editor cannot drift from the renderer.
+  ctx.effect(() => webServer.register({
+    kind: 'exact',
+    path: `${ROUTE_PREFIX}/cards/preview`,
+    handler: async (req, res) => {
+      if (!guard(req, res)) return
+      if (req.method !== 'POST') {
+        sendJson(res, 405, { ok: false, code: 'method', error: 'POST only' })
+        return
+      }
+      let body = {}
+      try {
+        const raw = await readBody(req)
+        if (raw) body = JSON.parse(raw)
+      } catch {
+        sendJson(res, 400, { ok: false, code: 'invalid', error: 'malformed JSON body' })
+        return
+      }
+      const inspected = inspectCard(body.card)
+      if ('error' in inspected) {
+        sendJson(res, 200, { ok: true, valid: false, error: inspected.error, warnings: [] })
+        return
+      }
+      const rendered = renderCard(inspected.card)
+      sendJson(res, 200, {
+        ok: true,
+        valid: true,
+        ...measure(rendered),
+        warnings: cardWarnings(inspected.card),
+      })
+    },
+  }))
+
+  // One card by id, plus the write that changes it. A single prefix
+  // registration serves GET and PUT because the route table rejects a duplicate
+  // (kind, path), and the matcher takes a prefix only when it equals the path or
+  // is followed by a slash - so this is registered without a trailing one.
+  ctx.effect(() => webServer.register({
+    kind: 'prefix',
+    path: `${ROUTE_PREFIX}/cards`,
+    handler: async (req, res) => {
+      if (!guard(req, res)) return
+      const id = decodeURIComponent(pathnameOf(req).slice(`${ROUTE_PREFIX}/cards`.length).replace(/^\//, ''))
+      if (!isValidCardId(id)) {
+        sendJson(res, 400, { ok: false, code: 'invalid-id', error: 'id must match ^[a-z0-9][a-z0-9-]*$' })
+        return
+      }
+
+      if (req.method === 'GET') {
+        const card = readCardFile(CARDS_DIR, id, ctx.logger ?? {})
+        if (card === undefined) {
+          sendJson(res, 404, { ok: false, code: 'not-found', error: `no card "${id}"` })
+          return
+        }
+        sendJson(res, 200, { ok: true, id, card })
+        return
+      }
+
+      if (req.method !== 'PUT') {
+        sendJson(res, 405, { ok: false, code: 'method', error: 'GET or PUT only' })
+        return
+      }
+
+      if (!cardExists(CARDS_DIR, id)) {
+        sendJson(res, 404, { ok: false, code: 'not-found', error: `no card "${id}"` })
+        return
+      }
+      let body = {}
+      try {
+        const raw = await readBody(req)
+        if (raw) body = JSON.parse(raw)
+      } catch {
+        sendJson(res, 400, { ok: false, code: 'invalid', error: 'malformed JSON body' })
+        return
+      }
+      const inspected = inspectCard(body.card)
+      if ('error' in inspected) {
+        sendJson(res, 400, { ok: false, code: 'invalid', error: inspected.error })
+        return
+      }
+      // The id is the filename, so a body whose id disagrees with the path is
+      // refused rather than written - otherwise one request could name two
+      // different files depending on which side you read.
+      if (text(inspected.card.id) !== id) {
+        sendJson(res, 400, { ok: false, code: 'id-mismatch', error: 'the card id does not match the path' })
+        return
+      }
+      const written = writeCardFile(CARDS_DIR, inspected.card, ctx.logger ?? {})
+      if (!written.ok) {
+        sendJson(res, 400, { ok: false, code: written.code, error: written.error })
+        return
+      }
+      sendJson(res, 200, { ok: true, id })
     },
   }))
 
