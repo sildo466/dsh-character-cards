@@ -192,6 +192,27 @@ function pathnameOf(req) {
 }
 
 /**
+ * Decode the id a prefix route was addressed with.
+ *
+ * A malformed percent-escape (`/%`, `/%zz`, `/%e0`) reaches a prefix handler:
+ * the prefix still matches, and `decodeURIComponent` throws `URIError`. That
+ * throw does not answer the request - it rejects the async handler's promise,
+ * which is a different failure class entirely, and on this runtime's default
+ * rejection handling it can terminate the host process instead of producing a
+ * response. Callers get undefined and answer it the way they answer any other
+ * unusable id.
+ * @param {string} rest - the pathname with the route prefix and leading slash removed.
+ * @returns {string | undefined} the decoded value, or undefined when undecodable.
+ */
+function decodeId(rest) {
+  try {
+    return decodeURIComponent(rest)
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * Reject anything that is not a loopback request from this machine.
  *
  * The Origin check is conditional on purpose: the Electron desktop shell
@@ -532,7 +553,10 @@ function registerRoutes(webServer, ctx) {
     path: `${ROUTE_PREFIX}/cards`,
     handler: async (req, res) => {
       if (!guard(req, res)) return
-      const rest = decodeURIComponent(pathnameOf(req).slice(`${ROUTE_PREFIX}/cards`.length).replace(/^\//, ''))
+      // An undecodable id becomes '', which the validity check below already
+      // refuses - so the malformed escape lands on the same 400 invalid-id as
+      // any other unusable id instead of throwing out of the handler.
+      const rest = decodeId(pathnameOf(req).slice(`${ROUTE_PREFIX}/cards`.length).replace(/^\//, '')) ?? ''
       const wantsApply = rest.endsWith('/apply')
       const id = wantsApply ? rest.slice(0, -'/apply'.length) : rest
       if (!isValidCardId(id)) {
@@ -615,7 +639,10 @@ function registerRoutes(webServer, ctx) {
     handler: async (req, res) => {
       if (!guard(req, res)) return
       const rest = pathnameOf(req).slice(`${ROUTE_PREFIX}/session`.length).replace(/^\//, '')
-      const sessionId = decodeURIComponent(rest.endsWith('/card') ? rest.slice(0, -'/card'.length) : rest)
+      // An undecodable id becomes '', which the emptiness check below already
+      // refuses - so a malformed escape answers 400 session id required rather
+      // than throwing out of the handler.
+      const sessionId = decodeId(rest.endsWith('/card') ? rest.slice(0, -'/card'.length) : rest) ?? ''
       if (sessionId.length === 0) {
         sendJson(res, 400, { ok: false, code: 'invalid', error: 'session id required' })
         return

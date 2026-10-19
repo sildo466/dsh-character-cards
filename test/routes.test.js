@@ -413,3 +413,19 @@ test('GET /cards carries the per-card usage count', async () => {
   const listed = res.body.cards.find(card => card.id === 'listed')
   assert.equal(listed.sessionsUsing, 1)
 })
+
+test('a malformed percent-escape answers 400 instead of throwing out of the handler', async () => {
+  // `/%` reaches the handler - the prefix still matches - and decodeURIComponent
+  // would throw on it. A throw from inside an async route handler rejects its
+  // promise rather than answering the request, which on this runtime can take
+  // the host process down, so the response has to come from the handler's own
+  // unusable-id path.
+  const cards = await harness().call('/dsh-character-cards/cards/%')
+  assert.equal(cards.status, 400)
+  assert.equal(cards.body.code, 'invalid-id')
+
+  const session = await harness().call('/dsh-character-cards/session/%')
+  assert.equal(session.status, 400)
+  assert.equal(session.body.code, 'invalid')
+  assert.equal(session.body.error, 'session id required')
+})
