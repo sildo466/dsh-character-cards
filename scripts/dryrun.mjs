@@ -23,20 +23,22 @@ for (const name of CARD_FILES) cpSync(join(repoCards, name), join(cardsDir, name
 writeFileSync(join(cardsDir, 'default'), 'terse-reviewer\n')
 writeFileSync(
   join(cardsDir, 'sessions.json'),
-  JSON.stringify({ 'session-override': 'patient-teacher', 'session-truncated': 'tiny-budget' }, null, 2),
+  JSON.stringify({ 'session-override': 'patient-teacher', 'session-legacy-budget': 'legacy-budget' }, null, 2),
 )
 
-// A card whose declared budget is far below what it renders, so the truncation
-// path runs and has to report itself.
-const tiny = JSON.parse(readFileSync(join(repoCards, 'terse-reviewer.dshcd'), 'utf8'))
-tiny.id = 'tiny-budget'
-tiny.name = '预算极小的卡'
-tiny.budget = { maxTokens: 50 }
-writeFileSync(join(cardsDir, 'tiny-budget.dshcd'), JSON.stringify(tiny, null, 2))
+// A card carrying a legacy `budget` key from before D11. Its maxTokens is far
+// below what the card renders to, which is the point: the key is now an unknown
+// field, so the card has to come out whole and the key has to survive untouched.
+const legacy = JSON.parse(readFileSync(join(repoCards, 'terse-reviewer.dshcd'), 'utf8'))
+legacy.id = 'legacy-budget'
+legacy.name = '带旧预算字段的卡'
+legacy.budget = { maxTokens: 50 }
+writeFileSync(join(cardsDir, 'legacy-budget.dshcd'), JSON.stringify(legacy, null, 2))
 
 // CARDS_DIR is computed when the module is evaluated, so this must be set first.
 process.env.DSH_HOME = home
 const { apply } = await import('../src/index.js')
+const { renderCard } = await import('../src/cards.js')
 
 const listeners = []
 const warnings = []
@@ -92,11 +94,22 @@ function makeAgent(id) {
 const cases = [
   ['session-override', 'session override wins over the default pointer'],
   ['session-default', 'no override -> default pointer (terse-reviewer)'],
-  ['session-truncated', 'budget.maxTokens 50 -> truncated, and warned about'],
+  ['session-legacy-budget', 'a legacy budget key changes nothing - the card renders whole (D11)'],
 ]
 
 const agents = cases.map(([id]) => makeAgent(id))
 for (const agent of agents) for (const listener of listeners) listener({ agent })
+
+// D11: a card's declared `budget` must not shorten anything. The same card with
+// the key removed has to bind to exactly the same text - if the legacy key were
+// still honoured, this is where it would show up.
+const bare = { ...legacy }
+delete bare.budget
+const bound = agents[2].captured
+if (bound === undefined || bound.text !== renderCard(bare)) {
+  console.error('FAIL: a card carrying a legacy budget key was not rendered whole')
+  process.exit(1)
+}
 
 console.log(`cards dir: ${cardsDir}\n`)
 console.log('id'.padEnd(18), 'resolved'.padEnd(18), 'order'.padEnd(6), 'tokens')
