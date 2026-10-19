@@ -157,3 +157,52 @@ test('switcherEntries offers the two session answers first, then every card', ()
   ])
 })
 
+test('fieldOf reads a nested path without throwing on a missing parent', () => {
+  const { fieldOf } = loaded.factory(makeFakeRequire())
+  const card = { identity: { role: '审阅者' }, workflow: { ask_when_unclear: true } }
+  assert.equal(fieldOf(card, 'identity.role'), '审阅者')
+  assert.equal(fieldOf(card, 'workflow.ask_when_unclear'), true)
+  assert.equal(fieldOf(card, 'voice.tone'), undefined)
+  assert.equal(fieldOf(card, 'missing.deep.path'), undefined)
+  assert.equal(fieldOf(undefined, 'a.b'), undefined)
+})
+
+test('withField replaces one nested value and leaves the rest byte-identical', () => {
+  const { withField } = loaded.factory(makeFakeRequire())
+  const original = { dshcd: 1, id: 'x', identity: { role: 'old' }, budget: { maxTokens: 400 } }
+  const next = withField(original, 'identity.role', 'new')
+
+  assert.deepEqual(next.identity, { role: 'new' })
+  // Unknown fields survive a field edit - the editor's whole preservation story
+  // depends on this.
+  assert.deepEqual(next.budget, { maxTokens: 400 })
+  // The input object is not mutated.
+  assert.equal(original.identity.role, 'old')
+  assert.notEqual(next, original)
+})
+
+test('withField creates the parent object when the group is absent', () => {
+  const { withField } = loaded.factory(makeFakeRequire())
+  const next = withField({ dshcd: 1, id: 'x' }, 'voice.tone', 'direct')
+  assert.deepEqual(next.voice, { tone: 'direct' })
+})
+
+test('editorGroups carries the five groups with their D2 badges', () => {
+  const { editorGroups } = loaded.factory(makeFakeRequire())
+  const groups = editorGroups()
+  assert.deepEqual(groups.map(group => group.key), ['identity', 'voice', 'code', 'workflow', 'constraints'])
+  assert.equal(groups[1].badge, '安全 · 只影响表达，不影响正确性')
+  assert.equal(groups[2].badge, '会改变代码 · 影响产出质量与风格')
+  assert.equal(groups[3].badge, '高风险 · 影响行为决策')
+  assert.equal(groups[0].fields.some(field => field.path === 'identity.role'), true)
+})
+
+test('isDirty compares structurally, not by key order', () => {
+  const { isDirty } = loaded.factory(makeFakeRequire())
+  assert.equal(isDirty({ a: 1, b: { c: 2 } }, { a: 1, b: { c: 2 } }), false)
+  assert.equal(isDirty({ b: { c: 2 }, a: 1 }, { a: 1, b: { c: 2 } }), false)
+  assert.equal(isDirty({ a: 1 }, { a: 2 }), true)
+  // A brand-new card is always dirty against "no original".
+  assert.equal(isDirty({ a: 1 }, null), true)
+})
+
