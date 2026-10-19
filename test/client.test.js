@@ -28,17 +28,20 @@ test('switcherMode picks session mode only for a non-empty sessionId', () => {
   assert.equal(switcherMode(undefined), 'global')
 })
 
-test('apply claims the verified slot key and survives a ctx with no slots', () => {
+test('apply claims a settings page and survives a ctx with no slots', () => {
   const { apply } = loaded.factory(() => fakeReact)
   const registered = []
   const slots = {
-    inject: (key, callback) => { assert.equal(key, 'plugins.row.config'); callback() },
+    inject: (key, callback) => { assert.equal(key, 'settings.section'); callback() },
     register: (options, component) => { registered.push({ options, component }); return () => {} },
   }
   apply({ get: (name) => (name === 'slots' ? slots : undefined) })
   assert.equal(registered.length, 1)
-  assert.equal(registered[0].options.name, 'plugins.row.config')
-  assert.equal(registered[0].options.key, 'dsh-character-cards#dsh-character-cards')
+  assert.equal(registered[0].options.name, 'settings.section')
+  // The id has to be unique among sections; 'plugins' is the shipped entry.
+  assert.equal(registered[0].options.id, 'character-cards')
+  assert.equal(typeof registered[0].options.order, 'number')
+  assert.equal(registered[0].options.label(), '角色卡')
 
   assert.doesNotThrow(() => apply({ get: () => undefined }))
   assert.doesNotThrow(() => apply({ get: () => { throw new Error('hostile') } }))

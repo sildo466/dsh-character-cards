@@ -71,8 +71,72 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Card picker. Degrades to a plain static label whenever the host is
-     * unreachable, so a broken fetch can never take the composer down.
+     * The settings page: every card, what each one costs, and which one new
+     * sessions default to.
+     *
+     * Root-scoped, so it has no session to switch and offers no "follow the
+     * default" entry - that only means something where a session is in hand.
+     * @returns {unknown} the section element.
+     */
+    function CardSettingsSection() {
+      const [state, setState] = react.useState({ status: 'loading', cards: [], defaultCard: null })
+
+      react.useEffect(() => {
+        let cancelled = false
+        void (async () => {
+          const payload = await getJson('/cards')
+          if (cancelled) return
+          setState(payload === undefined
+            ? { status: 'error', cards: [], defaultCard: null }
+            : { status: 'ready', cards: payload.cards ?? [], defaultCard: payload.defaultCard ?? null })
+        })()
+        return () => { cancelled = true }
+      }, [])
+
+      if (state.status === 'loading') return react.createElement('p', null, '读取卡片库…')
+      if (state.status === 'error') return react.createElement('p', null, '无法读取卡片库。')
+
+      const chooseDefault = (next) => {
+        setState(previous => ({ ...previous, defaultCard: next }))
+        void postJson('/default', { cardId: next })
+      }
+
+      const rows = state.cards.map(entry => react.createElement(
+        'li',
+        { key: entry.id, style: { display: 'flex', gap: '12px', padding: '4px 0' } },
+        react.createElement('span', { style: { flex: 1, minWidth: 0 } }, entry.name ?? entry.id),
+        react.createElement('span', { style: { opacity: 0.7, whiteSpace: 'nowrap' } },
+          `${entry.tokens} / ${entry.maxTokens} token`),
+        entry.truncated ? react.createElement('span', { style: { opacity: 0.7 } }, '已截断') : null,
+      ))
+
+      return react.createElement(
+        'div',
+        { style: { lineHeight: 1.7 } },
+        react.createElement('p', { style: { margin: '0 0 8px' } },
+          react.createElement('span', null, '默认卡 '),
+          react.createElement(
+            'select',
+            { value: state.defaultCard ?? '', onChange: (event) => chooseDefault(event.target.value) },
+            state.cards.map(entry =>
+              react.createElement('option', { key: entry.id, value: entry.id }, entry.name ?? entry.id)),
+          ),
+        ),
+        state.cards.length === 0
+          ? react.createElement('p', null, '卡片库为空。把 .dshcd 文件放进 ~/.dsh/character-cards/ 即可。')
+          : react.createElement('ul', { style: { margin: 0, padding: 0, listStyle: 'none' } }, rows),
+      )
+    }
+
+    /**
+     * Card picker for a slot beside the composer. Degrades to a plain static
+     * label whenever the host is unreachable, so a broken fetch can never take
+     * the composer down.
+     *
+     * Not mounted yet: it belongs on a session-scoped slot, and the live client
+     * tree has to be queried before registering into one - an undeclared key
+     * fails during plugin activation. Its two pure helpers are exported and
+     * covered so the mount is the only thing left when that key is known.
      * @param props - slot props; `sessionId` selects the mode.
      */
     function CardSwitcher(props) {
@@ -133,13 +197,18 @@ window.__ModuleLoader__.load({
       try {
         const slots = ctx.get('slots')
         if (slots === undefined || typeof slots.inject !== 'function') return
-        slots.inject('plugins.row.config', () => slots.register(
-          { name: 'plugins.row.config', key: 'dsh-character-cards#dsh-character-cards' },
-          CardSwitcher,
-        ))
+        // A settings page is the documented way to obtain a whole content area,
+        // and `id` has to be unique among existing sections - 'plugins' is the
+        // shipped one. `order` places this entry after it in the navigation.
+        slots.inject('settings.section', () => slots.register({
+          name: 'settings.section',
+          id: 'character-cards',
+          order: 20,
+          label: () => '角色卡',
+        }, CardSettingsSection))
       } catch {
-        // A missing or reshaped slot must degrade to "no card pane", never to
-        // a broken client.
+        // A missing or reshaped slot must degrade to "no settings page", never
+        // to a broken client.
       }
     }
 
