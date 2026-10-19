@@ -195,6 +195,28 @@ test('renderCardById renders a card by id and reports when one is missing', () =
   assert.equal(logger.warnings.length, 1)
 })
 
+test('renderCardById renders a long card whole even when it carries a legacy budget', () => {
+  // D11: `budget` is now an unknown field, not a limit. Under the old rules a
+  // budget of 1 token would have clipped this render to its first line - which
+  // was the identity prose, because truncation ran from the tail, so every
+  // constraint would have been the part that vanished.
+  const long = {
+    dshcd: 1,
+    id: 'long',
+    name: '长卡',
+    identity: { role: '审阅者' },
+    constraints: ['先说结论', '不要夸奖', '直接指出问题'],
+    budget: { maxTokens: 1 },
+  }
+  const logger = collector()
+  const rendered = renderCardById(library({ 'long.dshcd': long }), 'long', logger)
+
+  assert.match(rendered.text, /先说结论/)
+  assert.match(rendered.text, /直接指出问题/)
+  assert.equal(rendered.chars, renderCard(long).length)
+  assert.deepEqual(logger.warnings, [])
+})
+
 test('listCardSummaries reports every card with its estimated cost', () => {
   const dir = library({ 'terse.dshcd': TERSE, 'teacher.dshcd': TEACHER })
   const summaries = listCardSummaries(dir, collector())
