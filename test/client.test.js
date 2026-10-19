@@ -28,21 +28,56 @@ test('switcherMode picks session mode only for a non-empty sessionId', () => {
   assert.equal(switcherMode(undefined), 'global')
 })
 
-test('apply claims a settings page and survives a ctx with no slots', () => {
+test('apply claims the settings page and the composer tool row', () => {
   const { apply } = loaded.factory(() => fakeReact)
+  const injected = []
   const registered = []
   const slots = {
-    inject: (key, callback) => { assert.equal(key, 'settings.section'); callback() },
+    inject: (key, callback) => { injected.push(key); callback() },
     register: (options, component) => { registered.push({ options, component }); return () => {} },
   }
   apply({ get: (name) => (name === 'slots' ? slots : undefined) })
-  assert.equal(registered.length, 1)
-  assert.equal(registered[0].options.name, 'settings.section')
-  // The id has to be unique among sections; 'plugins' is the shipped entry.
-  assert.equal(registered[0].options.id, 'character-cards')
-  assert.equal(typeof registered[0].options.order, 'number')
-  assert.equal(registered[0].options.label(), '角色卡')
 
+  assert.deepEqual(injected, ['settings.section', 'conversation.input.left'])
+  assert.equal(registered.length, 2)
+
+  const [settings, composer] = registered
+  assert.equal(settings.options.name, 'settings.section')
+  // The id has to be unique among sections; 'plugins' and 'agent-presets' are
+  // shipped entries in the same list.
+  assert.equal(settings.options.id, 'character-cards')
+  assert.equal(typeof settings.options.order, 'number')
+  assert.equal(settings.options.label(), '角色卡')
+
+  assert.equal(composer.options.name, 'conversation.input.left')
+  // A list slot accepts id / order / label - not the `key` or `priority` a
+  // keyed or single slot would take.
+  assert.deepEqual(Object.keys(composer.options).sort(), ['id', 'name', 'order'])
+  assert.equal(composer.options.id, 'character-cards')
+
+  assert.equal(typeof settings.component, 'function')
+  assert.equal(typeof composer.component, 'function')
+  // The two surfaces are different components: the composer cell is the
+  // session-scoped switcher, the page is the root-scoped library panel.
+  assert.notEqual(settings.component, composer.component)
+})
+
+test('a slot that throws while mounting does not stop the other surface', () => {
+  const { apply } = loaded.factory(() => fakeReact)
+  const registered = []
+  const slots = {
+    inject: (key, callback) => {
+      if (key === 'settings.section') throw new Error('reshaped')
+      callback()
+    },
+    register: (options) => { registered.push(options); return () => {} },
+  }
+  assert.doesNotThrow(() => apply({ get: (name) => (name === 'slots' ? slots : undefined) }))
+  assert.deepEqual(registered.map(options => options.name), ['conversation.input.left'])
+})
+
+test('apply survives a ctx with no slots and a hostile one', () => {
+  const { apply } = loaded.factory(() => fakeReact)
   assert.doesNotThrow(() => apply({ get: () => undefined }))
   assert.doesNotThrow(() => apply({ get: () => { throw new Error('hostile') } }))
 })

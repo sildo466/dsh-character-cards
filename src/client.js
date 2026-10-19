@@ -191,25 +191,53 @@ window.__ModuleLoader__.load({
      * @param {import('@deepseek-ai/cordis').Context} ctx - plugin context.
      */
     function apply(ctx) {
-      // Every step is optional and silent on failure: a client plugin that
-      // throws out of apply() can take the whole client composition down with
-      // it, which is how plugin entries disappear from the UI entirely.
-      try {
-        const slots = ctx.get('slots')
-        if (slots === undefined || typeof slots.inject !== 'function') return
-        // A settings page is the documented way to obtain a whole content area,
-        // and `id` has to be unique among existing sections - 'plugins' is the
-        // shipped one. `order` places this entry after it in the navigation.
-        slots.inject('settings.section', () => slots.register({
-          name: 'settings.section',
-          id: 'character-cards',
-          order: 20,
-          label: () => '角色卡',
-        }, CardSettingsSection))
-      } catch {
-        // A missing or reshaped slot must degrade to "no settings page", never
-        // to a broken client.
+      /**
+       * Contribute one cell to a slot, tolerating its absence.
+       *
+       * `slots.inject` fires only once something declares the key, so a key the
+       * running build does not have is silent rather than fatal - a direct
+       * `slots.register` against an undeclared slot fails plugin activation
+       * instead. Each mount is isolated because a client plugin that throws out
+       * of apply() can take the whole client composition with it, which is how
+       * plugin entries disappear from the UI entirely.
+       * @param key - the slot to contribute to.
+       * @param options - registration options; the protocol is id / order / label.
+       * @param component - the component to render in that cell.
+       */
+      const mount = (key, options, component) => {
+        try {
+          const slots = ctx.get('slots')
+          if (slots === undefined || typeof slots.inject !== 'function') return
+          slots.inject(key, () => slots.register(options, component))
+        } catch {
+          // An absent or reshaped slot must degrade to "this surface is
+          // missing", never to a broken client.
+        }
       }
+
+      // A settings page is the documented way to obtain a whole content area.
+      // `id` has to be unique among sections - 'plugins' and 'agent-presets'
+      // are shipped ones - and `order` places this entry in the navigation.
+      mount('settings.section', {
+        name: 'settings.section',
+        id: 'character-cards',
+        order: 20,
+        label: () => '角色卡',
+      }, CardSettingsSection)
+
+      // The composer tool row. Confirmed against the live client tree rather
+      // than guessed: list cardinality, session scope, replaceRisk none, and an
+      // empty occupant list. A list slot under a fresh id is purely additive,
+      // so this cannot displace the tools already sitting in that row.
+      //
+      // Not conversation.input.dock, where the git-graph branch chip lives: that
+      // chip renders only for a blank session, and a card switcher that appears
+      // only before a session starts cannot do the one thing it is for.
+      mount('conversation.input.left', {
+        name: 'conversation.input.left',
+        id: 'character-cards',
+        order: 0,
+      }, CardSwitcher)
     }
 
     return { apply, initialSelection, switcherMode }
