@@ -337,6 +337,11 @@ window.__ModuleLoader__.load({
           title: `${group.title}  ·  ${group.badge}`,
           open,
           expandable: true,
+          // Without this, DisclosureRow defaults expandOnRowClick to false and
+          // the leading icon becomes the only toggle target - so the title row
+          // a user would naturally click does nothing. The bullet stays as
+          // decoration; the row itself is the target.
+          expandOnRowClick: true,
           onToggle,
         },
         group.fields.map(field => react.createElement(EditorField, {
@@ -380,12 +385,14 @@ window.__ModuleLoader__.load({
     /** Size and D5 advisories.
      *
      * `preview.error` covers both a transport failure and a card the host
-     * rejected, because the host puts its reason there in either case.
+     * rejected, because the host puts its reason there in either case. The
+     * contract marks it optional, so a `valid: false` answer without one must
+     * still say something rather than render an empty line.
      */
     function previewPanel(preview) {
       if (preview.status === 'idle') return null
       if (preview.status === 'error') return react.createElement('p', { style: { opacity: 0.8 } }, preview.error)
-      if (preview.valid !== true) return react.createElement('p', { style: { opacity: 0.8 } }, preview.error)
+      if (preview.valid !== true) return react.createElement('p', { style: { opacity: 0.8 } }, preview.error ?? '卡片无效')
       return react.createElement('div', { style: { marginTop: '12px', opacity: 0.85 } },
         react.createElement('div', null, `${preview.tokens} token · ${preview.chars} 字符`),
         (preview.warnings ?? []).map(warning =>
@@ -437,6 +444,17 @@ window.__ModuleLoader__.load({
       const valid = preview.status === 'ready' && preview.valid === true
       const canSave = valid
 
+      // A failed save leaves its message on screen until the next save clears
+      // it - so once the user has fixed the cause, the stale message still
+      // sits there claiming the card is unsavable. Clearing on every draft
+      // edit removes it the moment they act. Wrapped around the edit path
+      // rather than added as an effect on `view.draft`, because an effect
+      // would also fire on re-renders that are not edits.
+      const editDraft = (draft) => {
+        setSaveError(null)
+        onChange(draft)
+      }
+
       const save = async () => {
         setSaveError(null)
         const isNew = view.original === null
@@ -468,18 +486,18 @@ window.__ModuleLoader__.load({
         react.createElement('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '12px' } },
           react.createElement(Button, { size: 'sm', onClick: leave },
             dirty ? (confirmDiscard ? '确认放弃？' : '放弃修改') : '返回'),
-          idLockedField(view, onChange),
+          idLockedField(view, editDraft),
           react.createElement(Button, { size: 'sm', onClick: () => { void save() }, disabled: !canSave }, '保存'),
         ),
         saveError === null ? null : react.createElement('p', { style: { opacity: 0.8 } }, saveError),
-        nameField(view, onChange),
+        nameField(view, editDraft),
         groups.map(group => react.createElement(EditorGroup, {
           key: group.key,
           group,
           draft: view.draft,
           open: openGroup === group.key,
           onToggle: () => setOpenGroup(previous => (previous === group.key ? null : group.key)),
-          onChange,
+          onChange: editDraft,
         })),
         previewPanel(preview),
       )
@@ -496,15 +514,28 @@ window.__ModuleLoader__.load({
       const [state, setState] = react.useState({ status: 'loading', cards: [], defaultCard: null })
       const [view, setView] = react.useState({ kind: 'list' })
       const [defaultOpen, setDefaultOpen] = react.useState(false)
+      // A failed re-apply used to be invisible: the button awaited the request
+      // and reloaded the list regardless, so a host error vanished. One message,
+      // cleared by the next success - not a notification system.
+      const [applyError, setApplyError] = react.useState(null)
 
-      const reload = async () => {
+      // `reload` takes an optional "still mounted" predicate so the mount
+      // effect can discard a response that lands after unmount rather than
+      // calling setState on a dead component. Callers that run while mounted -
+      // after an apply, or on close - pass nothing.
+      const reload = async (stillMounted) => {
         const payload = await getJson('/cards')
+        if (stillMounted !== undefined && !stillMounted()) return
         setState(payload === undefined
           ? { status: 'error', cards: [], defaultCard: null }
           : { status: 'ready', cards: payload.cards ?? [], defaultCard: payload.defaultCard ?? null })
       }
 
-      react.useEffect(() => { void reload() }, [])
+      react.useEffect(() => {
+        let mounted = true
+        void reload(() => mounted)
+        return () => { mounted = false }
+      }, [])
 
       const openEditor = async (cardId) => {
         const payload = cardId === undefined ? undefined : await getJson(`/cards/${encodeURIComponent(cardId)}`)
@@ -556,7 +587,12 @@ window.__ModuleLoader__.load({
               react.createElement(Button, {
                 size: 'sm',
                 onClick: async () => {
-                  await postJson(`/cards/${encodeURIComponent(entry.id)}/apply`, {})
+                  const answer = await postJson(`/cards/${encodeURIComponent(entry.id)}/apply`, {})
+                  // The count on success is not shown; only a failure needs a
+                  // voice here, and a success clears whatever the last one said.
+                  setApplyError(answer === undefined || answer.ok !== true
+                    ? (answer?.error ?? '重新应用失败')
+                    : null)
                   void reload()
                 },
               }, '重新应用'),
@@ -567,6 +603,7 @@ window.__ModuleLoader__.load({
       return react.createElement(
         'div',
         { style: { lineHeight: 1.7 } },
+        applyError === null ? null : react.createElement('p', { style: { opacity: 0.8 } }, applyError),
         react.createElement('p', { style: { margin: '0 0 12px', display: 'flex', gap: '12px', alignItems: 'center' } },
           react.createElement('span', null, '默认卡 '),
           react.createElement(Menu, {
