@@ -7,7 +7,7 @@
  * @module dsh-character-cards/cards
  */
 
-import { readFileSync, readdirSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 /** @typedef {{ warn?: (message: string) => void }} Logger */
@@ -17,6 +17,13 @@ export const CARD_VERSION = 1
 
 /** Extension of a card definition file. */
 export const CARD_EXTENSION = '.dshcd'
+
+/** Characters a card id may contain. It becomes a filename, so this is also
+ * what keeps a card from being written outside the library directory. */
+const CARD_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/
+
+/** Longest accepted card id. */
+const MAX_CARD_ID_LENGTH = 64
 
 /**
  * Characters per token used for the size estimate.
@@ -269,6 +276,87 @@ export function loadCardLibrary(dir, logger) {
     cards.set(id, card)
   }
   return cards
+}
+
+/**
+ * Whether a value is usable as a card id, and therefore as a filename.
+ * @param {unknown} value - candidate id.
+ * @returns {boolean} true when safe.
+ */
+export function isValidCardId(value) {
+  return typeof value === 'string'
+    && value.length > 0
+    && value.length <= MAX_CARD_ID_LENGTH
+    && CARD_ID_PATTERN.test(value)
+}
+
+/**
+ * Path of one card file.
+ * @param {string} dir - library directory.
+ * @param {string} id - a valid card id.
+ * @returns {string} the path.
+ */
+function cardPath(dir, id) {
+  return join(dir, `${id}${CARD_EXTENSION}`)
+}
+
+/**
+ * Whether one card file is present.
+ * @param {string} dir - library directory.
+ * @param {string} id - card id.
+ * @returns {boolean} true when the file exists.
+ */
+export function cardExists(dir, id) {
+  return isValidCardId(id) && existsSync(cardPath(dir, id))
+}
+
+/**
+ * Read one card by id, returning the parsed object exactly as stored.
+ *
+ * The editor needs the whole object, not the summary: it clones this and edits
+ * only the fields it understands, so anything this build does not know survives
+ * a save (GOAL D6).
+ * @param {string} dir - library directory.
+ * @param {string} id - card id.
+ * @param {Logger} logger - logger for failures.
+ * @returns {Record<string, unknown> | undefined} the card, or undefined.
+ */
+export function readCardFile(dir, id, logger) {
+  if (!isValidCardId(id)) return undefined
+  return validateCard(readJsonFile(cardPath(dir, id), logger), id, logger)
+}
+
+/**
+ * Write one card atomically.
+ *
+ * The id is checked first because it is the filename. The write lands in a
+ * temporary neighbour and is renamed into place, so a crash mid-write cannot
+ * leave half a card where a whole one used to be.
+ * @param {string} dir - library directory.
+ * @param {unknown} card - the card to write.
+ * @param {Logger} logger - logger for failures.
+ * @returns {{ ok: true, id: string } | { ok: false, code: string, error: string }} the outcome.
+ */
+export function writeCardFile(dir, card, logger) {
+  const inspected = inspectCard(card)
+  if ('error' in inspected) return { ok: false, code: 'invalid', error: inspected.error }
+
+  const id = text(inspected.card.id)
+  if (id === undefined || !isValidCardId(id)) {
+    return { ok: false, code: 'invalid-id', error: 'id must match ^[a-z0-9][a-z0-9-]*$ and be at most 64 characters' }
+  }
+
+  const target = cardPath(dir, id)
+  const temporary = `${target}.tmp`
+  try {
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(temporary, `${JSON.stringify(inspected.card, null, 2)}\n`)
+    renameSync(temporary, target)
+    return { ok: true, id }
+  } catch (error) {
+    logger.warn?.(`cannot write ${target}: ${String(error)}`)
+    return { ok: false, code: 'write-failed', error: String(error) }
+  }
 }
 
 /**

@@ -68,13 +68,13 @@ test('validateCard keeps unknown fields on the object it returns', () => {
   assert.equal(validateCard(card, 'f.dshcd', collector())?.futureField.nested, true)
 })
 
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  clearSessionOverride,
-  listCardSummaries, loadCardLibrary, readDefaultCardId, readSessionOverrides,
-  renderCardById, resolveCardId, setSessionOverride,
+  cardExists, clearSessionOverride, isValidCardId,
+  listCardSummaries, loadCardLibrary, readCardFile, readDefaultCardId, readSessionOverrides,
+  renderCardById, resolveCardId, setSessionOverride, writeCardFile,
 } from '../src/cards.js'
 
 /** A temp library directory holding the given cards, keyed by filename. */
@@ -202,4 +202,53 @@ test('listCardSummaries reports every card with its estimated cost', () => {
   assert.ok(summaries[0].tokens > 0)
   assert.equal(summaries[0].chars > 0, true)
   assert.deepEqual(Object.keys(summaries[0]).sort(), ['chars', 'description', 'id', 'name', 'tokens'])
+})
+
+test('isValidCardId accepts safe ids and rejects anything that could escape the directory', () => {
+  assert.equal(isValidCardId('terse-reviewer'), true)
+  assert.equal(isValidCardId('a'), true)
+  assert.equal(isValidCardId('9lives'), true)
+
+  assert.equal(isValidCardId(''), false)
+  assert.equal(isValidCardId('Upper'), false)
+  assert.equal(isValidCardId('has space'), false)
+  assert.equal(isValidCardId('has_underscore'), false)
+  assert.equal(isValidCardId('../evil'), false)
+  assert.equal(isValidCardId('a/b'), false)
+  assert.equal(isValidCardId('a'.repeat(65)), false)
+  assert.equal(isValidCardId(42), false)
+  assert.equal(isValidCardId(null), false)
+})
+
+test('writeCardFile writes a card under its id and readCardFile returns it verbatim', () => {
+  const dir = library({})
+  const card = { dshcd: 1, id: 'roundtrip', name: '往返', futureField: { keep: true } }
+  assert.deepEqual(writeCardFile(dir, card, collector()), { ok: true, id: 'roundtrip' })
+  assert.equal(cardExists(dir, 'roundtrip'), true)
+
+  const read = readCardFile(dir, 'roundtrip', collector())
+  assert.deepEqual(read, card)
+  // Unknown fields survive, which is what the editor relies on.
+  assert.deepEqual(read.futureField, { keep: true })
+})
+
+test('writeCardFile refuses an unsafe id and writes nothing', () => {
+  const dir = library({})
+  const logger = collector()
+  const result = writeCardFile(dir, { dshcd: 1, id: '../escape' }, logger)
+  assert.equal(result.ok, false)
+  assert.equal(result.code, 'invalid-id')
+  assert.equal(cardExists(dir, '../escape'), false)
+})
+
+test('writeCardFile refuses a card that fails inspection', () => {
+  const result = writeCardFile(library({}), { dshcd: 7, id: 'ok' }, collector())
+  assert.equal(result.ok, false)
+  assert.equal(result.code, 'invalid')
+})
+
+test('writeCardFile leaves no temporary file behind', () => {
+  const dir = library({})
+  writeCardFile(dir, { dshcd: 1, id: 'clean' }, collector())
+  assert.deepEqual(readdirSync(dir).sort(), ['clean.dshcd'])
 })
