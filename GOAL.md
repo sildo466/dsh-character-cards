@@ -109,14 +109,16 @@ dsh 是编码工具，用户是开发者。**代码风格 + 语气**比世界观
     "no new dependencies without approval"
   ],
 
-  "budget": { "maxTokens": 400 },
   "extends": null
 }
 ```
 
+> **2026-10-19 修订**：`budget.maxTokens` 已从格式中移除，见 D11。
+
 **格式原则**：
 
-- `budget.maxTokens` 是**格式的一部分**，不是插件隐藏设置——作者与用户都能看到成本
+- ~~`budget.maxTokens` 是**格式的一部分**，不是插件隐藏设置——作者与用户都能看到成本~~
+  **已废除，见 D11。**
 - `extends` 支持卡继承（基础卡 + 派生卡），避免复制粘贴
 - `constraints` 是**祈使句硬规则**，与 `identity` 的散文分开
 - 未知字段**原样保留**，向前兼容
@@ -212,6 +214,22 @@ complete section，且会连带丢掉所有 `tool:*` section 的描述，严重�
 
 这也意味着：**已存在的 session 保持它创建时绑定的卡**。这是 D4 缓存原则的自然结果——
 按轮变化的内容不能进 system prompt，卡片在 session 内必须稳定。
+
+---
+
+### D11 预算不再是硬上限（2026-10-19 修订 D1）
+
+`budget.maxTokens` **从格式中移除**。
+
+- 渲染**永远输出完整卡片，绝不截断**
+- token 数是**纯信息**，编辑器与设置页照常显示，没有"超出"这回事
+- 旧卡里的 `budget` 按 D6 作为未知字段原样保留，编辑器不会抹掉它
+
+**原因**：估算方式是「字符数 ÷ 3」，不是 tokenizer，拿它当硬上限是假精确；而且实测发现截断
+是从**尾部**砍的，而渲染顺序把 `constraints` 与优先级声明放在末尾——**超预算时最先消失的恰恰
+是卡片最能生效的部分**。
+
+**代价**：没有机制阻止一张巨卡撑爆提示词，只剩可见的 token 数作为信号。接受。
 
 ### D4 缓存原则（硬规则）
 
@@ -376,7 +394,7 @@ node --import file:///C:/WinTool/deepseek-harness/node_modules/tsx/dist/esm/inde
 |---|---|
 | 性格/工作流设置伤任务正确性 | D2 分级 + UI 显式标注 + 高风险项默认关闭 |
 | 代码规则被 LLM 忽略 | D5 少而硬；v2 接 lint/format 真执行 |
-| 卡片增加每轮 token | `budget.maxTokens` 硬上限 + 编辑器显示占用 |
+| 卡片增加每轮 token | ~~`budget.maxTokens` 硬上限~~ → **仅显示占用，不设上限**（D11） |
 | API 在 0.2.0-rc.2 上漂移 | 第一步先验证，再动设计 |
 | 客户端插件弄坏 UI | D7 |
 | 桌面版 403 | D8 |
