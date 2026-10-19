@@ -189,7 +189,20 @@ window.__ModuleLoader__.load({
       }
     }
 
-    /** POST JSON, returning undefined instead of throwing. */
+    /**
+     * POST JSON.
+     * @param path - route path, below the plugin's prefix.
+     * @param body - the JSON body.
+     * @returns the parsed body; on a non-2xx status the body's own error fields
+     *   are kept with `ok: false` forced, so callers can say why. Undefined only
+     *   when the request itself failed.
+     *
+     * The distinction matters: a 409 from `POST /cards` carries `code: 'exists'`
+     * and a sentence a user can act on, and collapsing every non-2xx into
+     * undefined would leave the editor showing a bare "保存失败" for a problem
+     * the host already described. Callers that only care about success test
+     * `ok`, which the forced field keeps honest for a body that omitted it.
+     */
     async function postJson(path, body) {
       try {
         const res = await fetch(`${ROUTE}${path}`, {
@@ -197,8 +210,25 @@ window.__ModuleLoader__.load({
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(body),
         })
-        if (!res.ok) return undefined
-        return await res.json()
+        const payload = await res.json().catch(() => ({}))
+        if (res.ok) return payload
+        return { ok: false, code: payload.code ?? 'http', error: payload.error ?? `HTTP ${res.status}` }
+      } catch {
+        return undefined
+      }
+    }
+
+    /** PUT JSON, with the same error shape as postJson. */
+    async function putJson(path, body) {
+      try {
+        const res = await fetch(`${ROUTE}${path}`, {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+        const payload = await res.json().catch(() => ({}))
+        if (res.ok) return payload
+        return { ok: false, code: payload.code ?? 'http', error: payload.error ?? `HTTP ${res.status}` }
       } catch {
         return undefined
       }
@@ -318,38 +348,131 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /** The id row: an input while creating, plain text after that.
+     *
+     * The id is the file name and the sessions' pointer to it, so renaming an
+     * existing card would either orphan its file or leave the sessions that
+     * reference it pointing at nothing. A new card has no such history and
+     * picks its own id; after that it is fixed.
+     */
+    function idLockedField(view, onChange) {
+      if (view.original !== null) {
+        return react.createElement('span', { style: { opacity: 0.75 } }, `id: ${view.draft.id}`)
+      }
+      return react.createElement(Input, {
+        value: view.draft.id ?? '',
+        placeholder: 'id（小写字母、数字、连字符）',
+        onChange: (event) => onChange(withField(view.draft, 'id', event.target.value)),
+      })
+    }
+
+    /** The name row. */
+    function nameField(view, onChange) {
+      return react.createElement('div', { style: { margin: '8px 0' } },
+        react.createElement('div', { style: { opacity: 0.75, marginBottom: '4px' } }, '名称'),
+        react.createElement(Input, {
+          value: view.draft.name ?? '',
+          onChange: (event) => onChange(withField(view.draft, 'name', event.target.value)),
+        }),
+      )
+    }
+
+    /** Size and D5 advisories.
+     *
+     * `preview.error` covers both a transport failure and a card the host
+     * rejected, because the host puts its reason there in either case.
+     */
+    function previewPanel(preview) {
+      if (preview.status === 'idle') return null
+      if (preview.status === 'error') return react.createElement('p', { style: { opacity: 0.8 } }, preview.error)
+      if (preview.valid !== true) return react.createElement('p', { style: { opacity: 0.8 } }, preview.error)
+      return react.createElement('div', { style: { marginTop: '12px', opacity: 0.85 } },
+        react.createElement('div', null, `${preview.tokens} token · ${preview.chars} 字符`),
+        (preview.warnings ?? []).map(warning =>
+          react.createElement('div', { key: warning.code, style: { marginTop: '4px' } }, `⚠ ${warning.message}`)),
+      )
+    }
+
     /**
      * One card being edited.
+     *
+     * The preview is debounced because it round-trips to the host, which owns
+     * the format rules; the client never renders a second time to guess what a
+     * card costs. The effect keys on `view.draft`, a fresh object on every edit,
+     * so each keystroke clears the pending timer before it fires; the `cancelled`
+     * flag then discards a reply that was already in flight when the next edit
+     * landed, which is what keeps a slow host from showing one keystroke's size
+     * for the next keystroke's card.
+     *
+     * The draft is editable even while invalid - the host explains what is wrong
+     * and the user fixes it in place - but saving waits for `valid`.
+     *
+     * Saving is not applying: a save only lands on disk, and a session picks the
+     * new version up on its next turn. Pushing it into running sessions is the
+     * separate, deliberate press in the list row.
      * @param props.view - `{ draft, original }`.
      * @param props.onChange - called with the next draft.
      * @param props.onClose - return to the list, reloading it.
      */
     function CardEditor({ view, onChange, onClose }) {
       const [openGroup, setOpenGroup] = react.useState('identity')
+      const [preview, setPreview] = react.useState({ status: 'idle' })
+      const [saveError, setSaveError] = react.useState(null)
+      const [confirmDiscard, setConfirmDiscard] = react.useState(false)
 
-      const idLocked = view.original !== null
+      const dirty = isDirty(view.draft, view.original)
+
+      react.useEffect(() => {
+        let cancelled = false
+        const handle = setTimeout(async () => {
+          const answer = await postJson('/cards/preview', { card: view.draft })
+          if (cancelled) return
+          setPreview(answer === undefined
+            ? { status: 'error', error: '无法连接宿主' }
+            : { status: 'ready', ...answer })
+        }, 300)
+        return () => { cancelled = true; clearTimeout(handle) }
+      }, [view.draft])
+
+      const valid = preview.status === 'ready' && preview.valid === true
+      const canSave = valid
+
+      const save = async () => {
+        setSaveError(null)
+        const isNew = view.original === null
+        const path = isNew ? '/cards' : `/cards/${encodeURIComponent(view.draft.id)}`
+        const answer = await (isNew ? postJson(path, { card: view.draft }) : putJson(path, { card: view.draft }))
+        if (answer === undefined || answer.ok !== true) {
+          setSaveError(answer?.error ?? '保存失败')
+          return
+        }
+        onClose()
+      }
+
+      // Two clicks, no modal: a confirmation dialog interrupts for a decision
+      // the button itself can express, so the first press turns the button into
+      // the confirmation and the second discards. The flag is not reset by later
+      // edits - once the user has asked to leave, they are one press away from
+      // doing so, and re-arming on every keystroke would only add clicks.
+      const leave = () => {
+        if (!dirty) { onClose(); return }
+        if (!confirmDiscard) { setConfirmDiscard(true); return }
+        onClose()
+      }
+
       const groups = editorGroups()
 
       return react.createElement(
         'div',
         { style: { lineHeight: 1.7 } },
         react.createElement('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '12px' } },
-          react.createElement(Button, { size: 'sm', onClick: onClose }, '返回'),
-          idLocked
-            ? react.createElement('span', { style: { opacity: 0.75 } }, `id: ${view.draft.id}`)
-            : react.createElement(Input, {
-                value: view.draft.id ?? '',
-                placeholder: 'id（小写字母、数字、连字符）',
-                onChange: (event) => onChange(withField(view.draft, 'id', event.target.value)),
-              }),
+          react.createElement(Button, { size: 'sm', onClick: leave },
+            dirty ? (confirmDiscard ? '确认放弃？' : '放弃修改') : '返回'),
+          idLockedField(view, onChange),
+          react.createElement(Button, { size: 'sm', onClick: () => { void save() }, disabled: !canSave }, '保存'),
         ),
-        react.createElement('div', { style: { margin: '8px 0' } },
-          react.createElement('div', { style: { opacity: 0.75, marginBottom: '4px' } }, '名称'),
-          react.createElement(Input, {
-            value: view.draft.name ?? '',
-            onChange: (event) => onChange(withField(view.draft, 'name', event.target.value)),
-          }),
-        ),
+        saveError === null ? null : react.createElement('p', { style: { opacity: 0.8 } }, saveError),
+        nameField(view, onChange),
         groups.map(group => react.createElement(EditorGroup, {
           key: group.key,
           group,
@@ -358,6 +481,7 @@ window.__ModuleLoader__.load({
           onToggle: () => setOpenGroup(previous => (previous === group.key ? null : group.key)),
           onChange,
         })),
+        previewPanel(preview),
       )
     }
 
@@ -423,7 +547,20 @@ window.__ModuleLoader__.load({
         react.createElement(Button, { size: 'sm', onClick: () => { void openEditor(entry.id) } }, entry.name ?? entry.id),
         react.createElement('span', { style: { flex: 1, opacity: 0.7, whiteSpace: 'nowrap' } }, `${entry.tokens} token`),
         entry.sessionsUsing > 0
-          ? react.createElement('span', { style: { opacity: 0.7, whiteSpace: 'nowrap' } }, `${entry.sessionsUsing} 个会话正在使用`)
+          ? react.createElement('span', { style: { opacity: 0.7, whiteSpace: 'nowrap', display: 'inline-flex', gap: '6px', alignItems: 'center' } },
+              `${entry.sessionsUsing} 个会话正在使用`,
+              // Re-applying is opt-in and separate from saving: a live session
+              // keeps the card version it started with, so a saved edit reaches
+              // it only when someone presses this. The list is reloaded after,
+              // because the session count it reports can change.
+              react.createElement(Button, {
+                size: 'sm',
+                onClick: async () => {
+                  await postJson(`/cards/${encodeURIComponent(entry.id)}/apply`, {})
+                  void reload()
+                },
+              }, '重新应用'),
+            )
           : null,
       ))
 
