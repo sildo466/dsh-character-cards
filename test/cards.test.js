@@ -77,6 +77,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  clearSessionOverride,
   listCardSummaries, loadCardLibrary, readDefaultCardId, readSessionOverrides,
   renderCardById, resolveCardId, setSessionOverride,
 } from '../src/cards.js'
@@ -140,15 +141,40 @@ test('resolveCardId warns and falls through when a pointer names a missing card'
   assert.match(logger.warnings[0], /session override names card "ghost"/)
 })
 
-test('setSessionOverride writes and clears one entry without touching the others', () => {
+test('setSessionOverride pins or unpins one entry and clearSessionOverride drops it', () => {
   const dir = library({})
   const logger = collector()
   assert.equal(setSessionOverride(dir, 's1', 'terse', logger), true)
   assert.equal(setSessionOverride(dir, 's2', 'teacher', logger), true)
-  assert.equal(setSessionOverride(dir, 's1', null, logger), true)
+  assert.equal(setSessionOverride(dir, 's3', null, logger), true)
 
-  assert.deepEqual(readSessionOverrides(dir, logger), { s2: 'teacher' })
+  // Three states side by side, and none of the writes disturbs the others.
+  assert.deepEqual(readSessionOverrides(dir, logger), { s1: 'terse', s2: 'teacher', s3: null })
   assert.equal(readFileSync(join(dir, 'sessions.json'), 'utf8').endsWith('\n'), true)
+
+  assert.equal(clearSessionOverride(dir, 's1', logger), true)
+  assert.deepEqual(readSessionOverrides(dir, logger), { s2: 'teacher', s3: null })
+})
+
+test('an explicit null pin is distinct from an absent entry at every step', () => {
+  const dir = library({ 'terse.dshcd': TERSE })
+  const logger = collector()
+  writeFileSync(join(dir, 'default'), 'terse\n')
+
+  // Absent: the default applies.
+  assert.deepEqual(resolveCardId(dir, 's', logger), { cardId: 'terse', source: 'default pointer' })
+
+  // Explicit null: no card, even though a default exists.
+  setSessionOverride(dir, 's', null, logger)
+  assert.deepEqual(resolveCardId(dir, 's', logger), { cardId: null, source: 'session override' })
+
+  // Dropped again: back to the default.
+  clearSessionOverride(dir, 's', logger)
+  assert.deepEqual(resolveCardId(dir, 's', logger), { cardId: 'terse', source: 'default pointer' })
+
+  // And with no default either, absent resolves to nothing at all.
+  clearSessionOverride(dir, 'other', logger)
+  assert.equal(resolveCardId(library({}), 'other', logger), undefined)
 })
 
 test('readSessionOverrides returns an empty object for a missing or malformed file', () => {

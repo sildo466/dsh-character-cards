@@ -56,18 +56,22 @@ window.__ModuleLoader__.load({
     /**
      * Which option a switcher shows before the user touches it.
      *
-     * The two modes answer different questions. Global mode has no "follow the
-     * default" entry, so it must show the current default itself. Session mode
-     * shows the session's own override, or the empty value that means "follow
-     * the default".
+     * Option values are namespaced - `card:<id>`, `none`, `default` - so a card
+     * whose id happens to read "none" still gets its own option.
+     *
+     * The two modes answer different questions. Global mode only ever picks a
+     * card, so it shows the current default. Session mode has three answers:
+     * a pinned card, no card at all, or follow the default - and the last two
+     * are distinct even though both leave `cardId` reporting the default.
      * @param mode - `'session'` or `'global'`.
      * @param cards - the `/cards` payload.
      * @param session - the `/session/<id>` payload, or undefined in global mode.
      * @returns the value to select.
      */
     function initialSelection(mode, cards, session) {
-      if (mode === 'global') return cards?.defaultCard ?? ''
-      return session?.override ?? ''
+      if (mode === 'global') return cards?.defaultCard ? `card:${cards.defaultCard}` : ''
+      if (session === undefined || !Object.hasOwn(session, 'override')) return 'default'
+      return session.override === null ? 'none' : `card:${session.override}`
     }
 
     /**
@@ -139,22 +143,48 @@ window.__ModuleLoader__.load({
      * covered so the mount is the only thing left when that key is known.
      * @param props - slot props; `sessionId` selects the mode.
      */
+    /**
+     * Compact styling for the composer cell.
+     *
+     * A native select is chunky by default, which reads as a form control
+     * dropped into a row of small icon buttons. Stripping its chrome and
+     * inheriting the surrounding font and colour is enough to blend it without
+     * giving up the native popup - and the native popup is what keeps this from
+     * needing its own positioning, stacking, and click-outside handling.
+     */
+    const CHIP_STYLE = {
+      appearance: 'none',
+      border: 0,
+      borderRadius: '6px',
+      background: 'transparent',
+      color: 'inherit',
+      font: 'inherit',
+      padding: '2px 0',
+      cursor: 'pointer',
+      maxWidth: '150px',
+    }
+
     function CardSwitcher(props) {
       const mode = switcherMode(props)
       const sessionId = mode === 'session' ? props.sessionId : undefined
-      const [state, setState] = react.useState({ ready: false, cards: [], value: '' })
+      const [state, setState] = react.useState({ status: 'loading', cards: [], value: '' })
+      const [hovered, setHovered] = react.useState(false)
 
       react.useEffect(() => {
         let cancelled = false
         const load = async () => {
           const cards = await getJson('/cards')
-          if (cancelled || cards === undefined) return
+          if (cancelled) return
+          if (cards === undefined) {
+            setState({ status: 'error', cards: [], value: '' })
+            return
+          }
           const session = sessionId === undefined
             ? undefined
             : await getJson(`/session/${encodeURIComponent(sessionId)}`)
           if (cancelled) return
           setState({
-            ready: true,
+            status: 'ready',
             cards: cards.cards ?? [],
             value: initialSelection(mode, cards, session),
           })
@@ -163,26 +193,57 @@ window.__ModuleLoader__.load({
         return () => { cancelled = true }
       }, [mode, sessionId])
 
-      if (!state.ready) return react.createElement('span', null, '角色卡')
-
-      const choose = (next) => {
-        setState(previous => ({ ...previous, value: next }))
-        void postJson(
-          sessionId === undefined ? '/default' : `/session/${encodeURIComponent(sessionId)}/card`,
-          sessionId === undefined ? { cardId: next } : { cardId: next === '' ? null : next },
-        )
+      // Nothing at all until the host answers: a control that appears and then
+      // changes its mind is worse than one that appears settled.
+      if (state.status === 'loading') return null
+      if (state.status === 'error') {
+        return react.createElement('span', { style: { opacity: 0.5, fontSize: '12px' } }, '角色卡')
       }
 
-      const options = state.cards.map(card =>
-        react.createElement('option', { key: card.id, value: card.id }, card.name ?? card.id))
+      const choose = (option) => {
+        setState(previous => ({ ...previous, value: option }))
+        if (sessionId === undefined) {
+          if (option.startsWith('card:')) {
+            void postJson('/default', { cardId: option.slice('card:'.length) })
+          }
+          return
+        }
+        const sessionPath = `/session/${encodeURIComponent(sessionId)}/card`
+        // The body's shape carries the answer: a card id pins, null takes no
+        // card at all, and an empty body drops the entry.
+        if (option === 'none') void postJson(sessionPath, { cardId: null })
+        else if (option === 'default') void postJson(sessionPath, {})
+        else void postJson(sessionPath, { cardId: option.slice('card:'.length) })
+      }
+
+      const options = []
       if (sessionId !== undefined) {
-        options.unshift(react.createElement('option', { key: '__default', value: '' }, '跟随默认'))
+        options.push(react.createElement('option', { key: '__none', value: 'none' }, '不使用角色卡'))
+        options.push(react.createElement('option', { key: '__default', value: 'default' }, '跟随默认'))
+      }
+      for (const card of state.cards) {
+        options.push(react.createElement(
+          'option', { key: card.id, value: `card:${card.id}` }, card.name ?? card.id))
       }
 
       return react.createElement(
-        'select',
-        { value: state.value, onChange: (event) => choose(event.target.value), title: '角色卡' },
-        options,
+        'span',
+        {
+          style: { display: 'inline-flex', alignItems: 'center', opacity: hovered ? 1 : 0.7 },
+          onMouseEnter: () => setHovered(true),
+          onMouseLeave: () => setHovered(false),
+        },
+        react.createElement(
+          'select',
+          {
+            style: CHIP_STYLE,
+            value: state.value,
+            title: '角色卡',
+            onChange: (event) => choose(event.target.value),
+          },
+          options,
+        ),
+        react.createElement('span', { style: { fontSize: '9px', pointerEvents: 'none' } }, '▾'),
       )
     }
 

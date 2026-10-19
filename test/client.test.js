@@ -82,21 +82,25 @@ test('apply survives a ctx with no slots and a hostile one', () => {
   assert.doesNotThrow(() => apply({ get: () => { throw new Error('hostile') } }))
 })
 
-test('initialSelection shows the default in global mode and the override in session mode', () => {
+test('initialSelection names the option for each of the three session states', () => {
   const { initialSelection } = loaded.factory(() => fakeReact)
   const cards = { defaultCard: 'terse', cards: [] }
 
-  // Global mode carries no "follow the default" entry, so selecting '' would
-  // leave the browser showing whichever option happens to be first.
-  assert.equal(initialSelection('global', cards, undefined), 'terse')
+  // Global mode only ever picks a card, so it shows the current default.
+  assert.equal(initialSelection('global', cards, undefined), 'card:terse')
 
-  // Session mode selects the override, or '' - the "follow the default" entry -
-  // even though the effective card is still reported separately.
-  assert.equal(initialSelection('session', cards, { override: 'teacher', cardId: 'teacher' }), 'teacher')
-  assert.equal(initialSelection('session', cards, { override: null, cardId: 'terse' }), '')
+  // Session mode has three answers. Pinned and "no card" are distinct, and so
+  // is following the default - which reports the default as the effective card
+  // and therefore cannot be told from "no card" by cardId alone.
+  assert.equal(initialSelection('session', cards, { override: 'teacher', cardId: 'teacher' }), 'card:teacher')
+  assert.equal(initialSelection('session', cards, { override: null, cardId: null }), 'none')
+  assert.equal(initialSelection('session', cards, { cardId: 'terse', source: 'default pointer' }), 'default')
 
   // A host with no default set must not select an option that does not exist.
   assert.equal(initialSelection('global', { defaultCard: null, cards: [] }, undefined), '')
   assert.equal(initialSelection('global', undefined, undefined), '')
+
+  // The `card:` prefix is what keeps a card actually named "none" addressable.
+  assert.equal(initialSelection('global', { defaultCard: 'none', cards: [] }, undefined), 'card:none')
 })
 

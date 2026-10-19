@@ -18,6 +18,7 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import {
+  clearSessionOverride,
   listCardSummaries,
   loadCardLibrary,
   readDefaultCardId,
@@ -251,20 +252,27 @@ function resolveOrder(systemPrompt) {
  * @param {{ warn?: (message: string) => void }} logger - logger for diagnostics.
  */
 /**
+ * Resolve and render the card one session should carry right now.
+ * @param {string} sessionId - the shared agent/session id.
+ * @param {{ warn?: (message: string) => void }} logger - logger for failures.
+ * @returns {object | undefined} the rendered card plus its `source`, or undefined
+ *   when the session carries no card - whether because nothing is configured or
+ *   because it was explicitly told to take none.
+ */
+function renderedFor(sessionId, logger) {
+  const resolved = resolveCardId(CARDS_DIR, sessionId, logger)
+  if (resolved === undefined || resolved.cardId === null) return undefined
+  const card = renderCardById(CARDS_DIR, resolved.cardId, logger)
+  return card === undefined ? undefined : { ...card, source: resolved.source }
+}
+
+/**
  * Bind the active card to one agent's prompt section.
  * @param {{ id: string, ctx: object }} agent - the created agent.
  * @param {{ warn?: (message: string) => void }} logger - logger for diagnostics.
  */
 function bindCard(agent, logger) {
-  const resolved = resolveCardId(CARDS_DIR, agent.id, logger)
-  const rendered = resolved === undefined
-    ? undefined
-    : renderCardById(CARDS_DIR, resolved.cardId, logger)
-  registerSection(
-    agent,
-    rendered === undefined ? undefined : { ...rendered, source: resolved.source },
-    logger,
-  )
+  registerSection(agent, renderedFor(agent.id, logger), logger)
 }
 
 /**
@@ -340,11 +348,12 @@ function librarySnapshot() {
 /**
  * How one session resolves its card right now.
  *
- * `override` is the raw per-session entry, which the picker needs separately
- * from `cardId`: a session following the default still reports that default as
- * its effective card, and only `override` distinguishes the two.
+ * `override` is omitted rather than nulled when the session has no entry of its
+ * own, because the two are different answers: absent means "follow the
+ * default", an explicit null means "take no card". A picker needs all three
+ * states to render its selection.
  * @param {string} sessionId - the shared agent/session id.
- * @returns {{ sessionId: string, cardId: string | null, source: string | null, override: string | null }} the session view.
+ * @returns {{ sessionId: string, cardId: string | null, source: string | null, override?: string | null }} the session view.
  */
 function sessionView(sessionId) {
   const overrides = readSessionOverrides(CARDS_DIR, {})
@@ -353,7 +362,7 @@ function sessionView(sessionId) {
     sessionId,
     cardId: resolved === undefined ? null : resolved.cardId,
     source: resolved === undefined ? null : resolved.source,
-    override: Object.hasOwn(overrides, sessionId) ? overrides[sessionId] : null,
+    ...(Object.hasOwn(overrides, sessionId) ? { override: overrides[sessionId] } : {}),
   }
 }
 
@@ -370,11 +379,7 @@ function sessionView(sessionId) {
 function rebind(agent, sessionId, logger) {
   let rendered
   try {
-    const effective = resolveCardId(CARDS_DIR, sessionId, logger)
-    const card = effective === undefined
-      ? undefined
-      : renderCardById(CARDS_DIR, effective.cardId, logger)
-    rendered = card === undefined ? undefined : { ...card, source: effective.source }
+    rendered = renderedFor(sessionId, logger)
   } catch (error) {
     recordError(error)
     logger.warn?.(`resolving the new card for ${sessionId} failed; keeping the previous one: ${String(error)}`)
@@ -438,19 +443,25 @@ function registerRoutes(webServer, ctx) {
         sendJson(res, 400, { ok: false, code: 'invalid', error: 'malformed JSON body' })
         return
       }
-      // null clears the override, which is how a session goes back to following
-      // the default; a string pins it to that card.
-      const cardId = body.cardId === null ? null : text(body.cardId)
-      if (cardId === undefined) {
-        sendJson(res, 400, { ok: false, code: 'invalid', error: 'cardId must be a string or null' })
+      // Three states, told apart by the body's shape rather than by a sentinel
+      // value that a card id could collide with:
+      //   { cardId: "id" }  pin that card
+      //   { cardId: null }  take no card, even though a default exists
+      //   { }               drop the entry, following the default again
+      const hasCardId = Object.hasOwn(body, 'cardId')
+      const cardId = hasCardId && body.cardId !== null ? text(body.cardId) : null
+      if (hasCardId && cardId === undefined) {
+        sendJson(res, 400, { ok: false, code: 'invalid', error: 'cardId must be a non-empty string or null' })
         return
       }
-      if (cardId !== null && !loadCardLibrary(CARDS_DIR, {}).has(cardId)) {
+      if (typeof cardId === 'string' && !loadCardLibrary(CARDS_DIR, {}).has(cardId)) {
         sendJson(res, 400, { ok: false, code: 'unknown-card', error: `no card "${cardId}"` })
         return
       }
 
-      const written = setSessionOverride(CARDS_DIR, sessionId, cardId, logger)
+      const written = hasCardId
+        ? setSessionOverride(CARDS_DIR, sessionId, cardId, logger)
+        : clearSessionOverride(CARDS_DIR, sessionId, logger)
       // A session with no live agent is not an error: the override is already
       // on disk and takes effect when that session is next created or resumed.
       const agent = ctx.get('agents')?.get(sessionId)

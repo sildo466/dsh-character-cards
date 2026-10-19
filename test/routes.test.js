@@ -117,22 +117,29 @@ test('GET /cards lists the library and the default pointer', async () => {
   assert.ok(res.body.cards[0].chars > 0)
 })
 
-test('GET /session/<id> reports the effective card and whether it is an override', async () => {
-  writeFileSync(join(cardsDir, 'sessions.json'), `${JSON.stringify({ 'session-b': 'teacher' }, null, 2)}\n`)
+test('GET /session/<id> reports the effective card and how it was chosen', async () => {
+  writeFileSync(join(cardsDir, 'sessions.json'),
+    `${JSON.stringify({ 'session-b': 'teacher', 'session-n': null }, null, 2)}\n`)
 
-  const overridden = await harness().call('/dsh-character-cards/session/session-b')
-  assert.deepEqual(
-    { cardId: overridden.body.cardId, source: overridden.body.source, override: overridden.body.override },
-    { cardId: 'teacher', source: 'session override', override: 'teacher' },
-  )
+  const pinned = await harness().call('/dsh-character-cards/session/session-b')
+  assert.deepEqual(pinned.body, {
+    ok: true, sessionId: 'session-b', cardId: 'teacher', source: 'session override', override: 'teacher',
+  })
 
-  // A session following the default still reports that default as effective -
-  // only `override` separates the two cases.
+  // Following the default still reports that default as the effective card, and
+  // omits `override` outright - which is the whole of what separates it from
+  // the next case.
   const inherited = await harness().call('/dsh-character-cards/session/session-z')
-  assert.deepEqual(
-    { cardId: inherited.body.cardId, source: inherited.body.source, override: inherited.body.override },
-    { cardId: 'terse', source: 'default pointer', override: null },
-  )
+  assert.deepEqual(inherited.body, {
+    ok: true, sessionId: 'session-z', cardId: 'terse', source: 'default pointer',
+  })
+
+  // Explicitly no card: an override that happens to be null, and no effective
+  // card even though a default exists.
+  const none = await harness().call('/dsh-character-cards/session/session-n')
+  assert.deepEqual(none.body, {
+    ok: true, sessionId: 'session-n', cardId: null, source: 'session override', override: null,
+  })
 })
 
 test('GET /session rejects a missing session id', async () => {
@@ -168,16 +175,39 @@ test('POST writes the override even when no agent is live', async () => {
   assert.equal(readSessionOverrides(cardsDir, {})['session-cold'], 'teacher')
 })
 
-test('POST cardId null clears the override and returns the session to the default', async () => {
+test('POST cardId null takes no card, and an empty body drops the entry again', async () => {
   writeFileSync(join(cardsDir, 'sessions.json'), `${JSON.stringify({ 'session-c': 'teacher' }, null, 2)}\n`)
-  const res = await harness().call('/dsh-character-cards/session/session-c/card', {
+  const routes = harness()
+
+  const none = await routes.call('/dsh-character-cards/session/session-c/card', {
     method: 'POST',
     body: { cardId: null },
   })
-  assert.equal(res.body.override, null)
-  assert.equal(res.body.cardId, 'terse')
-  assert.equal(res.body.source, 'default pointer')
+  assert.equal(none.body.cardId, null)
+  assert.equal(none.body.source, 'session override')
+  assert.equal(none.body.override, null)
+  assert.equal(readSessionOverrides(cardsDir, {})['session-c'], null)
+
+  const cleared = await routes.call('/dsh-character-cards/session/session-c/card', {
+    method: 'POST',
+    body: {},
+  })
+  assert.equal(cleared.body.cardId, 'terse')
+  assert.equal(cleared.body.source, 'default pointer')
+  assert.equal(Object.hasOwn(cleared.body, 'override'), false)
   assert.equal(Object.hasOwn(readSessionOverrides(cardsDir, {}), 'session-c'), false)
+})
+
+test('taking no card disposes the section rather than leaving the old one up', async () => {
+  const agent = agentStub('session-none')
+  const routes = harness({ get: () => agent, list: () => [] })
+
+  await routes.call('/dsh-character-cards/session/session-none/card', { method: 'POST', body: { cardId: 'terse' } })
+  await new Promise(resolve => setTimeout(resolve, 0))
+  await routes.call('/dsh-character-cards/session/session-none/card', { method: 'POST', body: { cardId: null } })
+  await new Promise(resolve => setTimeout(resolve, 0))
+
+  assert.deepEqual(agent.events, ['register:dshcd:identity:terse', 'dispose', 'fiber-dispose'])
 })
 
 test('POST rejects an unknown card and a malformed cardId', async () => {
@@ -186,9 +216,15 @@ test('POST rejects an unknown card and a malformed cardId', async () => {
   assert.equal(unknown.status, 400)
   assert.equal(unknown.body.code, 'unknown-card')
 
-  const missing = await routes.call('/dsh-character-cards/session/s/card', { method: 'POST', body: {} })
-  assert.equal(missing.status, 400)
-  assert.equal(missing.body.code, 'invalid')
+  // An empty body is a valid request that drops the entry, so the rejection
+  // cases have to be a cardId that is present but unusable.
+  const malformed = await routes.call('/dsh-character-cards/session/s/card', { method: 'POST', body: { cardId: 7 } })
+  assert.equal(malformed.status, 400)
+  assert.equal(malformed.body.code, 'invalid')
+
+  const blank = await routes.call('/dsh-character-cards/session/s/card', { method: 'POST', body: { cardId: '' } })
+  assert.equal(blank.status, 400)
+  assert.equal(blank.body.code, 'invalid')
 })
 
 test('switching twice disposes the previous registration before registering the new one', async () => {

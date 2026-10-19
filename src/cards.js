@@ -317,9 +317,14 @@ export function setDefaultCardId(dir, cardId, logger) {
 
 /**
  * Read the per-session override table.
+ *
+ * A value is a card id, or null for a session that explicitly takes no card.
+ * That null is not the same as an absent entry: absent means "follow the global
+ * default", which is what a session does until someone says otherwise. Dropping
+ * nulls here would collapse the two states into one.
  * @param {string} dir - library directory.
  * @param {Logger} logger - logger for failures.
- * @returns {Record<string, string>} session id -> card id.
+ * @returns {Record<string, string | null>} session id -> card id, or null for none.
  */
 export function readSessionOverrides(dir, logger) {
   const value = readJsonFile(join(dir, SESSION_OVERRIDES_NAME), logger)
@@ -330,6 +335,10 @@ export function readSessionOverrides(dir, logger) {
   }
   const overrides = {}
   for (const [sessionId, cardId] of Object.entries(value)) {
+    if (cardId === null) {
+      overrides[sessionId] = null
+      continue
+    }
     const id = text(cardId)
     if (id !== undefined) overrides[sessionId] = id
   }
@@ -337,17 +346,13 @@ export function readSessionOverrides(dir, logger) {
 }
 
 /**
- * Write or clear one session's override, preserving the others.
+ * Write the override table back to disk.
  * @param {string} dir - library directory.
- * @param {string} sessionId - the agent's shared agent/session id.
- * @param {string | null} cardId - the card to pin, or null to clear the override.
+ * @param {Record<string, string | null>} overrides - the table to persist.
  * @param {Logger} logger - logger for failures.
  * @returns {boolean} whether the table was written.
  */
-export function setSessionOverride(dir, sessionId, cardId, logger) {
-  const overrides = readSessionOverrides(dir, logger)
-  if (cardId === null) delete overrides[sessionId]
-  else overrides[sessionId] = cardId
+function writeOverrides(dir, overrides, logger) {
   try {
     mkdirSync(dir, { recursive: true })
     writeFileSync(join(dir, SESSION_OVERRIDES_NAME), `${JSON.stringify(overrides, null, 2)}\n`)
@@ -359,32 +364,64 @@ export function setSessionOverride(dir, sessionId, cardId, logger) {
 }
 
 /**
- * Choose the card for one session: its override, else the global default.
- *
- * A pointer that names a card the library does not contain is reported and
- * stepped over rather than silently unbinding the session.
+ * Pin one session to a card, or to no card at all, preserving every other entry.
+ * @param {string} dir - library directory.
+ * @param {string} sessionId - the agent's shared agent/session id.
+ * @param {string | null} cardId - a card to pin, or null to take no card.
+ * @param {Logger} logger - logger for failures.
+ * @returns {boolean} whether the table was written.
+ */
+export function setSessionOverride(dir, sessionId, cardId, logger) {
+  const overrides = readSessionOverrides(dir, logger)
+  overrides[sessionId] = cardId
+  return writeOverrides(dir, overrides, logger)
+}
+
+/**
+ * Drop one session's entry so it follows the global default again.
  * @param {string} dir - library directory.
  * @param {string} sessionId - the agent's shared agent/session id.
  * @param {Logger} logger - logger for failures.
- * @returns {{ cardId: string, source: string } | undefined} the chosen id and
- *   where it came from, or undefined when unset.
+ * @returns {boolean} whether the table was written.
+ */
+export function clearSessionOverride(dir, sessionId, logger) {
+  const overrides = readSessionOverrides(dir, logger)
+  delete overrides[sessionId]
+  return writeOverrides(dir, overrides, logger)
+}
+
+/**
+ * Choose the card for one session: its own entry, else the global default.
+ *
+ * Three outcomes, and a null cardId is not the same as `undefined`: null says
+ * this session takes no card even though a default exists, while `undefined`
+ * says nothing is configured at all.
+ * @param {string} dir - library directory.
+ * @param {string} sessionId - the agent's shared agent/session id.
+ * @param {Logger} logger - logger for failures.
+ * @returns {{ cardId: string | null, source: string } | undefined} the choice, or
+ *   undefined when unset.
  */
 export function resolveCardId(dir, sessionId, logger) {
   const library = loadCardLibrary(dir, logger)
   const overrides = readSessionOverrides(dir, logger)
-  const candidates = [
-    [overrides[sessionId], 'session override'],
-    [readDefaultCardId(dir), 'default pointer'],
-  ]
-  for (const [id, source] of candidates) {
-    if (id === undefined) continue
-    if (!library.has(id)) {
-      logger.warn?.(`${source} names card "${id}", which is not in ${dir}`)
-      continue
-    }
-    return { cardId: id, source }
+
+  if (Object.hasOwn(overrides, sessionId)) {
+    const pinned = overrides[sessionId]
+    if (pinned === null) return { cardId: null, source: 'session override' }
+    if (library.has(pinned)) return { cardId: pinned, source: 'session override' }
+    // A pin that names a card the library no longer holds is reported, and the
+    // session falls back to the default the same way an unpinned one would.
+    logger.warn?.(`session override names card "${pinned}", which is not in ${dir}`)
   }
-  return undefined
+
+  const fallback = readDefaultCardId(dir)
+  if (fallback === undefined) return undefined
+  if (!library.has(fallback)) {
+    logger.warn?.(`default pointer names card "${fallback}", which is not in ${dir}`)
+    return undefined
+  }
+  return { cardId: fallback, source: 'default pointer' }
 }
 
 /**
