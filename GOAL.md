@@ -401,9 +401,9 @@ node --import file:///C:/WinTool/deepseek-harness/node_modules/tsx/dist/esm/inde
 
 ---
 
-## 9. 进度与下一步（2026-10-18）
+## 9. 进度与下一步（2026-10-19）
 
-第 4 节的三个验证**已全部完成**，结论已补回本文档；D3 已按实测修正；D9/D10 为新增决策。
+第 4 节的三个验证**已全部完成**，结论已补回本文档；D3 已按实测修正；D9/D10/D11 为新增决策。
 
 ### 阶段划分
 
@@ -412,20 +412,41 @@ node --import file:///C:/WinTool/deepseek-harness/node_modules/tsx/dist/esm/inde
 | **P0** | 空插件装进 profile（宿主 + 客户端两半） | 插件管理页出现一行标记，其余 UI 无损 | ✅ 完成 |
 | **P1 上半** | `.dshcd` 读取 → 渲染 → 注入 agent scope | 「你好」的回复从客套变暴躁，标记全中 | ✅ 完成 |
 | **P1 下半** | 软卡对比 | 同一段代码，两张卡输出语气/代码风格明显不同 | ✅ 完成 |
-| **P1 收尾** | 卡片库、解析顺序、默认指针、per-session 覆盖、D6 保留字段、budget 截断告警 | 目录里放多张卡，改 `default` 文件换全局卡 | ⏳ 待做 |
-| **P2** | 运行时重绑 + 宿主路由 + **已验证 slot 上的最小切换入口** | 一个 session 内点一下切卡，下一轮就变 | 待做 |
-| **P3** | slot 发现 + 完整管理 UI | 列表、token 占用、新建/删除 | 待做 |
-| **P4** | 编辑器 + 导入导出 | `.dshcd` 零丢失往返 | 待做 |
+| **P1 收尾** | 卡片库、解析顺序、默认指针、per-session 覆盖、D6 保留字段 | 目录里放多张卡，改 `default` 文件换全局卡 | ✅ 完成 |
+| **P2** | 运行时重绑 + 宿主路由 + 已验证 slot 上的切换入口 | 同一 session 内点一下切卡，下一轮就变 | ✅ 完成 |
+| **P3** | 编辑器：新建 / 编辑 / 保存、实时预览、显式「重新应用」 | 设置页里改一张卡并保存，不离开 UI | ⏳ 实现完成，待活体验证 |
+| **P4** | 生命周期：导入 / 导出 / 复制 / 删除 | `.dshcd` 零丢失往返 | 待做 |
+
+**P3 的范围由 spec 定稿**（`docs/superpowers/specs/2026-10-19-p3-card-editor-design.md`）：
+只做新建 / 编辑 / 保存，导入导出留给 P4。
+
+**P3 落地时确定的两条**：
+
+1. `budget.maxTokens` 删除（D11）。渲染永不截断，token 数只是信息。
+2. **保存不重绑**。保存只落盘；要让改动对已经在跑的 session 生效，必须显式点
+   「重新应用」。列表上会显示「N 个会话正在使用」作为提示。
+
 
 **P2 的 UI 用 P0 已验证的 slot**（`plugins.row.config`），零新增风险。
 真正的选卡 UI 位置留到 P3——技能里写死了「不许猜 slot，必须用 `Slots.listSubTree` 问活体」，
 而那是 Claude Code 结构上做不到、只能靠 dsh 创造模式做的事。
 
-### P1 收尾的注意点
+### P3 落地后的接口（宿主端口）
 
-- `active.dshcd` 这个单文件拐杖要退休，换成卡片库 + `default` 指针
-- D6 要求**未知字段原样保留**——现在直接忽略，往返会丢字段
-- `budget.maxTokens` 超限要**截断并告警**，不能静默
+```
+GET  /dsh-character-cards/cards              列表 + 默认指针 + 每卡 sessionsUsing
+GET  /dsh-character-cards/cards/<id>         卡片原始对象 + sessionsUsing
+POST /dsh-character-cards/cards              新建（id 已存在 → 409）
+PUT  /dsh-character-cards/cards/<id>         更新（不存在 → 404；id 不符 → 400）
+POST /dsh-character-cards/cards/preview      草稿 → 校验 + token 估算 + D5 告警
+POST /dsh-character-cards/cards/<id>/apply   重新应用到正在用它的 live session
+GET  /dsh-character-cards/session/<id>       某 session 当前生效的卡
+POST /dsh-character-cards/session/<id>/card  改 per-session 覆盖
+POST /dsh-character-cards/default            改全局默认
+GET  /dsh-character-cards/status             诊断
+```
+
+卡片 `id` 即文件名，白名单 `^[a-z0-9][a-z0-9-]*$` 且 ≤ 64；写入走 临时文件 + rename。
 
 ### 开发环境
 
