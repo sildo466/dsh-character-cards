@@ -32,7 +32,9 @@
       "patch": "./cordis.patch.yml"
     },
     "client": {
-      "inject": [],
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-primitives"
+      ],
       "platform": "web"
     }
   }

@@ -15,6 +15,22 @@ window.__ModuleLoader__.load({
   factory: (require) => {
     const react = require('react')
 
+    // A package whose client half cannot be required takes the whole module
+    // down, and an unregistered specifier throws on the spot rather than
+    // returning undefined. So the lookup is guarded, and the switcher falls
+    // back to a plain select when the primitives are not where this build
+    // expects them - a plain control beats a broken client.
+    let primitives
+    try {
+      primitives = require('@deepseek-ai/dsh-client-ui-primitives')
+    } catch {
+      primitives = undefined
+    }
+    const Menu = primitives?.Menu
+    const Pill = primitives?.Pill
+    const Chevron = primitives?.IconChevronDownOutline14
+    const canUseMenu = typeof Menu === 'function' && typeof Pill === 'function'
+
     const ROUTE = '/dsh-character-cards'
 
     /**
@@ -133,24 +149,34 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Card picker for a slot beside the composer. Degrades to a plain static
-     * label whenever the host is unreachable, so a broken fetch can never take
-     * the composer down.
+     * The options a switcher offers, in menu order.
      *
-     * Not mounted yet: it belongs on a session-scoped slot, and the live client
-     * tree has to be queried before registering into one - an undeclared key
-     * fails during plugin activation. Its two pure helpers are exported and
-     * covered so the mount is the only thing left when that key is known.
-     * @param props - slot props; `sessionId` selects the mode.
+     * One source, two presentations: the popover menu and the fallback select
+     * both render this list, so they cannot disagree about what is on offer.
+     * `id` is the option value, namespaced as `card:<id>` / `none` / `default`
+     * so a card whose id literally reads "none" keeps its own row.
+     * @param mode - `'session'` or `'global'`.
+     * @param cards - the `/cards` payload.
+     * @returns the entries, in the order a menu should show them.
      */
+    function switcherEntries(mode, cards) {
+      const entries = []
+      if (mode === 'session') {
+        entries.push({ id: 'none', label: '不使用角色卡' })
+        entries.push({ id: 'default', label: '跟随默认' })
+      }
+      for (const card of cards?.cards ?? []) {
+        entries.push({ id: `card:${card.id}`, label: card.name ?? card.id })
+      }
+      return entries
+    }
+
     /**
-     * Compact styling for the composer cell.
+     * Styling for the fallback select only; the primary control is a Pill.
      *
      * A native select is chunky by default, which reads as a form control
-     * dropped into a row of small icon buttons. Stripping its chrome and
-     * inheriting the surrounding font and colour is enough to blend it without
-     * giving up the native popup - and the native popup is what keeps this from
-     * needing its own positioning, stacking, and click-outside handling.
+     * dropped into a row of small icon buttons. Stripping its chrome at least
+     * lets it blend instead of announcing itself.
      */
     const CHIP_STYLE = {
       appearance: 'none',
@@ -164,11 +190,20 @@ window.__ModuleLoader__.load({
       maxWidth: '150px',
     }
 
+    /**
+     * Card picker for a cell beside the composer.
+     *
+     * The trigger is a Pill and the popup is the shipped Menu, so the control
+     * wears the same clothes as the ones beside it and dsh keeps ownership of
+     * anchoring and outside-click dismissal. When those primitives are missing,
+     * the same entries render as a plain select - plainer, but still working.
+     * @param props - slot props; `sessionId` selects the mode.
+     */
     function CardSwitcher(props) {
       const mode = switcherMode(props)
       const sessionId = mode === 'session' ? props.sessionId : undefined
-      const [state, setState] = react.useState({ status: 'loading', cards: [], value: '' })
-      const [hovered, setHovered] = react.useState(false)
+      const [state, setState] = react.useState({ status: 'loading', entries: [], value: '' })
+      const [open, setOpen] = react.useState(false)
 
       react.useEffect(() => {
         let cancelled = false
@@ -176,7 +211,7 @@ window.__ModuleLoader__.load({
           const cards = await getJson('/cards')
           if (cancelled) return
           if (cards === undefined) {
-            setState({ status: 'error', cards: [], value: '' })
+            setState({ status: 'error', entries: [], value: '' })
             return
           }
           const session = sessionId === undefined
@@ -185,7 +220,7 @@ window.__ModuleLoader__.load({
           if (cancelled) return
           setState({
             status: 'ready',
-            cards: cards.cards ?? [],
+            entries: switcherEntries(mode, cards),
             value: initialSelection(mode, cards, session),
           })
         }
@@ -201,6 +236,7 @@ window.__ModuleLoader__.load({
       }
 
       const choose = (option) => {
+        setOpen(false)
         setState(previous => ({ ...previous, value: option }))
         if (sessionId === undefined) {
           if (option.startsWith('card:')) {
@@ -216,34 +252,40 @@ window.__ModuleLoader__.load({
         else void postJson(sessionPath, { cardId: option.slice('card:'.length) })
       }
 
-      const options = []
-      if (sessionId !== undefined) {
-        options.push(react.createElement('option', { key: '__none', value: 'none' }, '不使用角色卡'))
-        options.push(react.createElement('option', { key: '__default', value: 'default' }, '跟随默认'))
-      }
-      for (const card of state.cards) {
-        options.push(react.createElement(
-          'option', { key: card.id, value: `card:${card.id}` }, card.name ?? card.id))
+      if (canUseMenu) {
+        const current = state.entries.find(entry => entry.id === state.value)
+        return react.createElement(Menu, {
+          open,
+          items: state.entries,
+          selectedId: state.value,
+          onSelect: choose,
+          onClose: () => setOpen(false),
+          // Opening upward is what a control at the bottom of the composer
+          // needs, and it is what the shipped permission selector does.
+          side: 'top',
+          anchor: react.createElement(
+            Pill,
+            { onClick: () => setOpen(!open), active: open, title: '角色卡' },
+            react.createElement('span', null, current?.label ?? '角色卡'),
+            Chevron === undefined ? null : react.createElement(
+              'span',
+              { style: { marginLeft: '4px', display: 'inline-flex', verticalAlign: 'middle' }, 'aria-hidden': true },
+              react.createElement(Chevron),
+            ),
+          ),
+        })
       }
 
       return react.createElement(
-        'span',
+        'select',
         {
-          style: { display: 'inline-flex', alignItems: 'center', opacity: hovered ? 1 : 0.7 },
-          onMouseEnter: () => setHovered(true),
-          onMouseLeave: () => setHovered(false),
+          style: CHIP_STYLE,
+          value: state.value,
+          title: '角色卡',
+          onChange: (event) => choose(event.target.value),
         },
-        react.createElement(
-          'select',
-          {
-            style: CHIP_STYLE,
-            value: state.value,
-            title: '角色卡',
-            onChange: (event) => choose(event.target.value),
-          },
-          options,
-        ),
-        react.createElement('span', { style: { fontSize: '9px', pointerEvents: 'none' } }, '▾'),
+        state.entries.map(entry =>
+          react.createElement('option', { key: entry.id, value: entry.id }, entry.label)),
       )
     }
 
@@ -301,6 +343,6 @@ window.__ModuleLoader__.load({
       }, CardSwitcher)
     }
 
-    return { apply, initialSelection, switcherMode }
+    return { apply, initialSelection, switcherEntries, switcherMode }
   },
 })
