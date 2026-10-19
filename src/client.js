@@ -28,8 +28,86 @@ window.__ModuleLoader__.load({
     }
     const Menu = primitives?.Menu
     const Pill = primitives?.Pill
-    const Chevron = primitives?.IconChevronDownOutline14
-    const canUseMenu = typeof Menu === 'function' && typeof Pill === 'function'
+    const ChevronIcon = primitives?.IconChevronDownOutline14
+      ?? primitives?.IconChevronDownOutlineMedium
+      ?? primitives?.IconChevronDownOutlineRegular
+    // forwardRef() and memo() components are objects, not functions. Testing
+    // typeof === 'function' would call a perfectly good Button "missing".
+    const isPrimitive = (component) => component !== undefined && component !== null
+    const canUseMenu = isPrimitive(Menu) && isPrimitive(Pill)
+
+    // One stylesheet for both surfaces. The module system runs the factory
+    // body at materialization, so a guarded append is the plugin-owned way to
+    // ship presentation without a build step. Every rule is prefixed dshcc-.
+    const STYLE_ID = 'dsh-character-cards-style'
+    const STYLES = `
+.dshcc-root{display:flex;flex-direction:column;gap:16px;max-width:760px;font-size:var(--dsh-content-font-size,14px);line-height:1.5;color:var(--dsw-alias-label-primary)}
+.dshcc-muted{margin:0;font-size:13px;color:var(--dsw-alias-label-tertiary)}
+.dshcc-spacer{flex:1 1 auto}
+.dshcc-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.dshcc-card{display:flex;flex-direction:column;gap:12px;padding:14px;border:0.5px solid var(--dsw-alias-border-l3);border-radius:14px;background:var(--dsw-alias-bg-layer-1)}
+.dshcc-list{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none}
+.dshcc-row{display:flex;align-items:center;gap:12px;padding:12px 14px;border:0.5px solid var(--dsw-alias-border-l3);border-radius:12px;background:var(--dsw-alias-bg-layer-1);transition:background 120ms ease,border-color 120ms ease}
+.dshcc-row:hover{background:var(--dsw-alias-interactive-bg-hover);border-color:var(--dsw-alias-border-l4)}
+.dshcc-name{padding:0;border:none;background:none;color:var(--dsw-alias-label-primary);font:inherit;font-size:14px;font-weight:600;text-align:left;cursor:pointer}
+.dshcc-name:hover{color:var(--dsw-alias-link)}
+.dshcc-meta{font-size:12px;color:var(--dsw-alias-label-tertiary);white-space:nowrap}
+.dshcc-actions{display:flex;align-items:center;gap:8px;margin-left:auto}
+.dshcc-chip{display:inline-flex;align-items:center;height:24px;padding:0 8px;border-radius:12px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);font-size:12px;white-space:nowrap}
+.dshcc-group{border:0.5px solid var(--dsw-alias-border-l3);border-radius:14px;background:var(--dsw-alias-bg-layer-1);overflow:hidden;transition:border-color 120ms ease}
+.dshcc-group[data-open]{border-color:var(--dsw-alias-border-l4)}
+.dshcc-grouphead{display:flex;align-items:center;gap:10px;width:100%;padding:12px 16px;border:none;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.dshcc-grouphead:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dshcc-grouptext{display:flex;flex-direction:column;gap:2px;min-width:0}
+.dshcc-chevron{display:inline-flex;align-items:center;justify-content:center;flex:none;width:16px;height:16px;color:var(--dsw-alias-label-tertiary);transition:transform 160ms ease}
+.dshcc-chevron[data-open]{transform:rotate(180deg)}
+.dshcc-chevronshape{display:block;width:7px;height:7px;margin-top:-3px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg)}
+.dshcc-grouptitle{font-size:14px;font-weight:600;color:var(--dsw-alias-label-primary)}
+.dshcc-badge{font-size:12px;color:var(--dsw-alias-label-tertiary)}
+.dshcc-groupbody{display:flex;flex-direction:column;gap:14px;padding:14px 16px 16px;border-top:0.5px solid var(--dsw-alias-border-l2)}
+.dshcc-field{display:flex;flex-direction:column;gap:6px}
+.dshcc-label{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:500;color:var(--dsw-alias-label-secondary)}
+.dshcc-inputwrap{display:flex;width:100%}
+.dshcc-rowline{display:flex;align-items:center;gap:8px}
+.dshcc-callout{padding:10px 12px;border:0.5px solid var(--dsw-alias-border-l3);border-radius:12px;background:var(--dsw-alias-bg-layer-2);font-size:13px;color:var(--dsw-alias-label-secondary)}
+.dshcc-callout[data-tone="error"]{border-color:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-label-error)}
+.dshcc-warning{margin-top:4px;font-size:12px;color:var(--dsw-alias-label-tertiary)}
+.dshcc-empty{padding:20px 16px;border:0.5px dashed var(--dsw-alias-border-l3);border-radius:12px;text-align:center;color:var(--dsw-alias-label-tertiary);font-size:13px}
+`
+
+    if (typeof document !== 'undefined') {
+      const existing = document.getElementById(STYLE_ID)
+      if (existing === null) {
+        const style = document.createElement('style')
+        style.id = STYLE_ID
+        style.textContent = STYLES
+        style.dataset.pluginCss = 'dsh-character-cards'
+        document.head.appendChild(style)
+      } else if (existing.textContent !== STYLES) {
+        // HMR rematerializes the factory; refresh, don't duplicate.
+        existing.textContent = STYLES
+      }
+    }
+
+    /** A chevron that needs no icon export, so it survives icon-set renames. */
+    function Chevron({ open }) {
+      return react.createElement(
+        'span',
+        { className: 'dshcc-chevron', 'data-open': open ? '' : undefined, 'aria-hidden': true },
+        react.createElement('span', { className: 'dshcc-chevronshape' }),
+      )
+    }
+
+    /** Label above a control, with optional helper text. */
+    function Field({ label, hint, children }) {
+      return react.createElement(
+        'div',
+        { className: 'dshcc-field' },
+        react.createElement('span', { className: 'dshcc-label' }, label),
+        children,
+        hint === undefined ? null : react.createElement('span', { className: 'dshcc-meta' }, hint),
+      )
+    }
 
     // Editor primitives. Looked up the same guarded way as the switcher's:
     // an undefined component handed to react.createElement throws, so the
@@ -37,7 +115,6 @@ window.__ModuleLoader__.load({
     // message when the build does not export them.
     const Input = primitives?.Input
     const Button = primitives?.Button
-    const DisclosureRow = primitives?.DisclosureRow
 
     const ROUTE = '/dsh-character-cards'
 
@@ -267,12 +344,12 @@ window.__ModuleLoader__.load({
       if (field.kind === 'bool') {
         return react.createElement(
           'div',
-          { style: { display: 'flex', alignItems: 'center', gap: '8px', margin: '6px 0' } },
+          { className: 'dshcc-rowline' },
           react.createElement(Pill, {
             active: value === true,
             onClick: () => onChange(withField(draft, field.path, value !== true)),
           }, value === true ? '已开启' : '已关闭'),
-          react.createElement('span', { style: { opacity: 0.75 } }, field.label),
+          react.createElement('span', { className: 'dshcc-meta' }, field.label),
         )
       }
 
@@ -285,36 +362,37 @@ window.__ModuleLoader__.load({
           onChange(withField(draft, field.path, copy))
         }
         return react.createElement(
-          'div',
-          { style: { margin: '8px 0' } },
-          react.createElement('div', { style: { opacity: 0.75, marginBottom: '4px' } }, field.label),
-          entries.map((entry, index) => react.createElement(
-            'div',
-            { key: String(index), style: { display: 'flex', gap: '6px', marginBottom: '4px' } },
-            // Input renders its own wrapper span around the <input>, and puts
-            // any style it is handed on the <input> itself. The flex has to be
-            // on a span we own, or the field will not stretch.
-            react.createElement('span', { style: { flex: 1, display: 'flex', minWidth: 0 } },
-              react.createElement(Input, {
-                value: String(entry),
-                onChange: (event) => replace(index, event.target.value),
-                style: { width: '100%' },
-              }),
-            ),
-            react.createElement(Button, { size: 'sm', onClick: () => replace(index, undefined) }, '删除'),
-          )),
+          Field,
+          { label: field.label },
+          entries.length === 0
+            ? react.createElement('span', { className: 'dshcc-meta' }, '暂无条目')
+            : entries.map((entry, index) => react.createElement(
+                'div',
+                { key: String(index), className: 'dshcc-rowline' },
+                react.createElement(Input, {
+                  className: 'dshcc-inputwrap',
+                  value: String(entry),
+                  onChange: (event) => replace(index, event.target.value),
+                }),
+                react.createElement(Button, {
+                  size: 'sm',
+                  variant: 'outline',
+                  onClick: () => replace(index, undefined),
+                }, '删除'),
+              )),
           react.createElement(Button, {
             size: 'sm',
+            variant: 'outline',
             onClick: () => onChange(withField(draft, field.path, [...entries, ''])),
           }, `添加${field.label}`),
         )
       }
 
       return react.createElement(
-        'div',
-        { style: { margin: '8px 0' } },
-        react.createElement('div', { style: { opacity: 0.75, marginBottom: '4px' } }, field.label),
+        Field,
+        { label: field.label },
         react.createElement(Input, {
+          className: 'dshcc-inputwrap',
           value: typeof value === 'string' ? value : '',
           onChange: (event) => onChange(withField(draft, field.path, event.target.value)),
         }),
@@ -331,67 +409,89 @@ window.__ModuleLoader__.load({
      */
     function EditorGroup({ group, draft, open, onToggle, onChange }) {
       return react.createElement(
-        DisclosureRow,
-        {
-          icon: react.createElement('span', { 'aria-hidden': true }, '•'),
-          title: `${group.title}  ·  ${group.badge}`,
-          open,
-          expandable: true,
-          // Without this, DisclosureRow defaults expandOnRowClick to false and
-          // the leading icon becomes the only toggle target - so the title row
-          // a user would naturally click does nothing. The bullet stays as
-          // decoration; the row itself is the target.
-          expandOnRowClick: true,
-          onToggle,
-        },
-        group.fields.map(field => react.createElement(EditorField, {
-          key: field.path,
-          draft,
-          field,
-          onChange,
-        })),
+        'section',
+        { className: 'dshcc-group', 'data-open': open ? '' : undefined },
+        react.createElement(
+          'button',
+          {
+            type: 'button',
+            className: 'dshcc-grouphead',
+            'aria-expanded': open,
+            onClick: onToggle,
+          },
+          react.createElement(Chevron, { open }),
+          react.createElement(
+            'span',
+            { className: 'dshcc-grouptext' },
+            react.createElement('span', { className: 'dshcc-grouptitle' }, group.title),
+            react.createElement('span', { className: 'dshcc-badge' }, group.badge),
+          ),
+        ),
+        open
+          ? react.createElement(
+              'div',
+              { className: 'dshcc-groupbody' },
+              group.fields.map(field => react.createElement(EditorField, {
+                key: field.path,
+                draft,
+                field,
+                onChange,
+              })),
+            )
+          : null,
       )
     }
 
-    /** The id row: an input while creating, plain text after that.
+    /**
+     * The identity card: id (create-only), name, and description.
      *
      * The id is the file name and the sessions' pointer to it, so renaming an
      * existing card would either orphan its file or leave the sessions that
-     * reference it pointing at nothing. A new card has no such history and
-     * picks its own id; after that it is fixed.
+     * reference it pointing at nothing. A new card picks its own id; after that
+     * it is shown read-only.
      */
-    function idLockedField(view, onChange) {
-      if (view.original !== null) {
-        return react.createElement('span', { style: { opacity: 0.75 } }, `id: ${view.draft.id}`)
-      }
-      return react.createElement(Input, {
-        value: view.draft.id ?? '',
-        placeholder: 'id（小写字母、数字、连字符）',
-        onChange: (event) => onChange(withField(view.draft, 'id', event.target.value)),
-      })
-    }
-
-    /** The name row. */
-    function nameField(view, onChange) {
-      return react.createElement('div', { style: { margin: '8px 0' } },
-        react.createElement('div', { style: { opacity: 0.75, marginBottom: '4px' } }, '名称'),
-        react.createElement(Input, {
-          value: view.draft.name ?? '',
-          onChange: (event) => onChange(withField(view.draft, 'name', event.target.value)),
-        }),
-      )
-    }
-
-    /** The description row. Metadata only - `renderCard` never reads it, and
-     * nothing in the prompt depends on it, but it is part of the format and the
-     * library summary carries it, so the editor lets it be set. */
-    function descriptionField(view, onChange) {
-      return react.createElement('div', { style: { margin: '8px 0' } },
-        react.createElement('div', { style: { opacity: 0.75, marginBottom: '4px' } }, '描述'),
-        react.createElement(Input, {
-          value: view.draft.description ?? '',
-          onChange: (event) => onChange(withField(view.draft, 'description', event.target.value)),
-        }),
+    function cardMetaFields(view, onChange) {
+      return react.createElement(
+        'div',
+        { className: 'dshcc-card' },
+        view.original === null
+          ? react.createElement(
+              Field,
+              { label: 'ID', hint: '小写字母、数字、连字符；创建后不可更改' },
+              react.createElement(Input, {
+                className: 'dshcc-inputwrap',
+                value: view.draft.id ?? '',
+                placeholder: '例如 patient-teacher',
+                onChange: (event) => onChange(withField(view.draft, 'id', event.target.value)),
+              }),
+            )
+          : react.createElement(
+              Field,
+              { label: 'ID' },
+              react.createElement('span', { className: 'dshcc-chip' }, view.draft.id),
+            ),
+        react.createElement(
+          Field,
+          { label: '名称' },
+          react.createElement(Input, {
+            className: 'dshcc-inputwrap',
+            value: view.draft.name ?? '',
+            placeholder: '给这张卡起个名字',
+            onChange: (event) => onChange(withField(view.draft, 'name', event.target.value)),
+          }),
+        ),
+        // Metadata only - `renderCard` never reads it, but it is part of the
+        // format and the library summary carries it.
+        react.createElement(
+          Field,
+          { label: '描述', hint: '仅用于卡片列表，不会进入提示词' },
+          react.createElement(Input, {
+            className: 'dshcc-inputwrap',
+            value: view.draft.description ?? '',
+            placeholder: '一句话说明这张卡的用途',
+            onChange: (event) => onChange(withField(view.draft, 'description', event.target.value)),
+          }),
+        ),
       )
     }
 
@@ -401,15 +501,25 @@ window.__ModuleLoader__.load({
      * rejected, because the host puts its reason there in either case. The
      * contract marks it optional, so a `valid: false` answer without one must
      * still say something rather than render an empty line.
+     *
+     * A pristine new card is invalid by definition (no id yet). Showing that
+     * as an error the moment the editor opens reads as a failure the user
+     * caused; validation speaks only after the first edit.
      */
-    function previewPanel(preview) {
+    function previewPanel(preview, touched) {
       if (preview.status === 'idle') return null
-      if (preview.status === 'error') return react.createElement('p', { style: { opacity: 0.8 } }, preview.error)
-      if (preview.valid !== true) return react.createElement('p', { style: { opacity: 0.8 } }, preview.error ?? '卡片无效')
-      return react.createElement('div', { style: { marginTop: '12px', opacity: 0.85 } },
+      if (preview.status === 'error') {
+        return react.createElement('p', { className: 'dshcc-callout', 'data-tone': 'error' }, preview.error)
+      }
+      if (preview.valid !== true) {
+        if (!touched) return null
+        return react.createElement('p', { className: 'dshcc-callout', 'data-tone': 'error' },
+          preview.error ?? '卡片无效')
+      }
+      return react.createElement('div', { className: 'dshcc-callout' },
         react.createElement('div', null, `${preview.tokens} token · ${preview.chars} 字符`),
         (preview.warnings ?? []).map(warning =>
-          react.createElement('div', { key: warning.code, style: { marginTop: '4px' } }, `⚠ ${warning.message}`)),
+          react.createElement('div', { key: warning.code, className: 'dshcc-warning' }, `⚠ ${warning.message}`)),
       )
     }
 
@@ -439,8 +549,12 @@ window.__ModuleLoader__.load({
       const [preview, setPreview] = react.useState({ status: 'idle' })
       const [saveError, setSaveError] = react.useState(null)
       const [confirmDiscard, setConfirmDiscard] = react.useState(false)
+      // A new card starts invalid (no id yet). Until the first edit, the
+      // editor must not present that as a failure the user caused.
+      const [touched, setTouched] = react.useState(false)
 
       const dirty = isDirty(view.draft, view.original)
+      const changed = touched && dirty
 
       react.useEffect(() => {
         let cancelled = false
@@ -464,11 +578,13 @@ window.__ModuleLoader__.load({
       // rather than added as an effect on `view.draft`, because an effect
       // would also fire on re-renders that are not edits.
       const editDraft = (draft) => {
+        setTouched(true)
         setSaveError(null)
         onChange(draft)
       }
 
       const save = async () => {
+        setTouched(true)
         setSaveError(null)
         const isNew = view.original === null
         const path = isNew ? '/cards' : `/cards/${encodeURIComponent(view.draft.id)}`
@@ -486,7 +602,7 @@ window.__ModuleLoader__.load({
       // edits - once the user has asked to leave, they are one press away from
       // doing so, and re-arming on every keystroke would only add clicks.
       const leave = () => {
-        if (!dirty) { onClose(); return }
+        if (!changed) { onClose(); return }
         if (!confirmDiscard) { setConfirmDiscard(true); return }
         onClose()
       }
@@ -495,21 +611,24 @@ window.__ModuleLoader__.load({
 
       return react.createElement(
         'div',
-        { style: { lineHeight: 1.7 } },
-        react.createElement('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '12px' } },
-          react.createElement(Button, { size: 'sm', onClick: leave },
-            dirty ? (confirmDiscard ? '确认放弃？' : '放弃修改') : '返回'),
-          idLockedField(view, editDraft),
+        { className: 'dshcc-root' },
+        react.createElement(
+          'div',
+          { className: 'dshcc-toolbar' },
+          react.createElement(Button, { variant: 'outline', onClick: leave },
+            changed ? (confirmDiscard ? '确认放弃？' : '放弃修改') : '返回'),
+          react.createElement('span', { className: 'dshcc-spacer' }),
           react.createElement(Button, {
-            size: 'sm',
-            variant: dirty ? 'primary' : 'ghost',
+            variant: 'primary',
+            title: canSave ? '保存到卡片库' : '卡片无效，修正后即可保存',
             onClick: () => { void save() },
             disabled: !canSave,
           }, '保存'),
         ),
-        saveError === null ? null : react.createElement('p', { style: { opacity: 0.8 } }, saveError),
-        nameField(view, editDraft),
-        descriptionField(view, editDraft),
+        saveError === null
+          ? null
+          : react.createElement('p', { className: 'dshcc-callout', 'data-tone': 'error' }, saveError),
+        cardMetaFields(view, editDraft),
         groups.map(group => react.createElement(EditorGroup, {
           key: group.key,
           group,
@@ -518,7 +637,7 @@ window.__ModuleLoader__.load({
           onToggle: () => setOpenGroup(previous => (previous === group.key ? null : group.key)),
           onChange: editDraft,
         })),
-        previewPanel(preview),
+        previewPanel(preview, touched),
       )
     }
 
@@ -576,16 +695,21 @@ window.__ModuleLoader__.load({
         })
       }
 
-      // The editor is built entirely from the primitives package. When a build
-      // does not export them, say so - rendering an undefined component throws,
-      // and a client component that throws can take the whole client
-      // composition with it.
-      const missingPrimitives = [Menu, Pill, Input, Button, DisclosureRow]
-        .some(component => typeof component !== 'function')
+      // The surfaces are built from these atoms. A build that does not export
+      // them gets a message instead of an undefined component (which would
+      // throw out of render). forwardRef/memo components are objects, so the
+      // presence check must not test typeof.
+      const missingPrimitives = [Menu, Pill, Input, Button]
+        .some(component => !isPrimitive(component))
 
-      if (state.status === 'loading') return react.createElement('p', null, '读取卡片库…')
-      if (state.status === 'error') return react.createElement('p', null, '无法读取卡片库。')
-      if (missingPrimitives) return react.createElement('p', null, '角色卡控件不可用：客户端 UI 原语缺失。')
+      if (state.status === 'loading') return react.createElement('p', { className: 'dshcc-muted' }, '读取卡片库…')
+      if (state.status === 'error') {
+        return react.createElement('p', { className: 'dshcc-callout', 'data-tone': 'error' }, '无法读取卡片库。')
+      }
+      if (missingPrimitives) {
+        return react.createElement('p', { className: 'dshcc-callout', 'data-tone': 'error' },
+          '角色卡控件不可用：客户端 UI 原语缺失。')
+      }
 
       if (view.kind === 'editor') {
         return react.createElement(CardEditor, {
@@ -600,20 +724,33 @@ window.__ModuleLoader__.load({
         void postJson('/default', { cardId: next })
       }
 
+      const defaultName = state.cards.find(entry => entry.id === state.defaultCard)?.name
+        ?? state.defaultCard
+        ?? '未设置'
+
       const rows = state.cards.map(entry => react.createElement(
         'li',
-        { key: entry.id, style: { display: 'flex', gap: '12px', padding: '4px 0', alignItems: 'center' } },
-        react.createElement(Button, { size: 'sm', onClick: () => { void openEditor(entry.id) } }, entry.name ?? entry.id),
-        react.createElement('span', { style: { flex: 1, opacity: 0.7, whiteSpace: 'nowrap' } }, `${entry.tokens} token`),
+        { key: entry.id, className: 'dshcc-row' },
+        react.createElement('button', {
+          type: 'button',
+          className: 'dshcc-name',
+          onClick: () => { void openEditor(entry.id) },
+        }, entry.name ?? entry.id),
+        react.createElement('span', { className: 'dshcc-meta' }, `${entry.tokens} token`),
         entry.sessionsUsing > 0
-          ? react.createElement('span', { style: { opacity: 0.7, whiteSpace: 'nowrap', display: 'inline-flex', gap: '6px', alignItems: 'center' } },
-              `${entry.sessionsUsing} 个会话正在使用`,
-              // Re-applying is opt-in and separate from saving: a live session
-              // keeps the card version it started with, so a saved edit reaches
-              // it only when someone presses this. The list is reloaded after,
-              // because the session count it reports can change.
-              react.createElement(Button, {
+          ? react.createElement('span', { className: 'dshcc-chip' }, `${entry.sessionsUsing} 个会话`)
+          : null,
+        react.createElement(
+          'span',
+          { className: 'dshcc-actions' },
+          entry.sessionsUsing > 0
+            // Re-applying is opt-in and separate from saving: a live session
+            // keeps the card version it started with, so a saved edit reaches
+            // it only when someone presses this. The list is reloaded after,
+            // because the session count it reports can change.
+            ? react.createElement(Button, {
                 size: 'sm',
+                variant: 'outline',
                 onClick: async () => {
                   const answer = await postJson(`/cards/${encodeURIComponent(entry.id)}/apply`, {})
                   // The count on success is not shown; only a failure needs a
@@ -623,35 +760,56 @@ window.__ModuleLoader__.load({
                     : null)
                   void reload()
                 },
-              }, '重新应用'),
-            )
-          : null,
+              }, '重新应用')
+            : null,
+          react.createElement(Button, {
+            size: 'sm',
+            variant: 'ghost',
+            onClick: () => { void openEditor(entry.id) },
+          }, '编辑'),
+        ),
       ))
 
       return react.createElement(
         'div',
-        { style: { lineHeight: 1.7 } },
-        openError === null ? null : react.createElement('p', { style: { opacity: 0.8 } }, openError),
-        applyError === null ? null : react.createElement('p', { style: { opacity: 0.8 } }, applyError),
-        react.createElement('p', { style: { margin: '0 0 12px', display: 'flex', gap: '12px', alignItems: 'center' } },
-          react.createElement('span', null, '默认卡 '),
-          react.createElement(Menu, {
-            open: defaultOpen,
-            items: state.cards.map(entry => ({ id: entry.id, label: entry.name ?? entry.id })),
-            selectedId: state.defaultCard,
-            onSelect: (id) => { setDefaultOpen(false); chooseDefault(id) },
-            onClose: () => setDefaultOpen(false),
-            side: 'bottom',
-            anchor: react.createElement(Pill, {
-              active: defaultOpen,
-              onClick: () => setDefaultOpen(!defaultOpen),
-            }, state.defaultCard ?? '未设置'),
-          }),
-          react.createElement(Button, { size: 'sm', onClick: () => { void openEditor(undefined) } }, '新建卡片'),
+        { className: 'dshcc-root' },
+        openError === null
+          ? null
+          : react.createElement('p', { className: 'dshcc-callout', 'data-tone': 'error' }, openError),
+        applyError === null
+          ? null
+          : react.createElement('p', { className: 'dshcc-callout', 'data-tone': 'error' }, applyError),
+        react.createElement(
+          'div',
+          { className: 'dshcc-card' },
+          react.createElement(
+            'div',
+            { className: 'dshcc-rowline' },
+            react.createElement('span', { className: 'dshcc-label' }, '默认角色卡'),
+            react.createElement(Menu, {
+              open: defaultOpen,
+              items: state.cards.map(entry => ({ id: entry.id, label: entry.name ?? entry.id })),
+              selectedId: state.defaultCard,
+              onSelect: (id) => { setDefaultOpen(false); chooseDefault(id) },
+              onClose: () => setDefaultOpen(false),
+              side: 'bottom',
+              anchor: react.createElement(Pill, {
+                active: defaultOpen,
+                onClick: () => setDefaultOpen(!defaultOpen),
+              }, defaultName),
+            }),
+            react.createElement('span', { className: 'dshcc-spacer' }),
+            react.createElement(Button, {
+              variant: 'primary',
+              onClick: () => { void openEditor(undefined) },
+            }, '新建卡片'),
+          ),
+          react.createElement('p', { className: 'dshcc-muted' },
+            '新会话默认使用这张卡；单个会话可在输入框左侧切换。'),
         ),
         state.cards.length === 0
-          ? react.createElement('p', null, '卡片库为空。点「新建卡片」开始。')
-          : react.createElement('ul', { style: { margin: 0, padding: 0, listStyle: 'none' } }, rows),
+          ? react.createElement('div', { className: 'dshcc-empty' }, '卡片库为空。点「新建卡片」开始。')
+          : react.createElement('ul', { className: 'dshcc-list' }, rows),
       )
     }
 
@@ -774,10 +932,10 @@ window.__ModuleLoader__.load({
             Pill,
             { onClick: () => setOpen(!open), active: open, title: '角色卡' },
             react.createElement('span', null, current?.label ?? '角色卡'),
-            Chevron === undefined ? null : react.createElement(
+            ChevronIcon === undefined ? null : react.createElement(
               'span',
               { style: { marginLeft: '4px', display: 'inline-flex', verticalAlign: 'middle' }, 'aria-hidden': true },
-              react.createElement(Chevron),
+              react.createElement(ChevronIcon),
             ),
           ),
         })
@@ -850,6 +1008,11 @@ window.__ModuleLoader__.load({
       }, CardSwitcher)
     }
 
-    return { apply, editorGroups, fieldOf, initialSelection, isDirty, switcherEntries, switcherMode, withField }
+    // Cordis runs apply() only once the named services exist. Without this,
+    // apply() can run before `slots` is provided, ctx.get('slots') is
+    // undefined, and both mounts silently do nothing.
+    const inject = ['slots']
+
+    return { apply, inject, editorGroups, fieldOf, initialSelection, isDirty, switcherEntries, switcherMode, withField }
   },
 })
