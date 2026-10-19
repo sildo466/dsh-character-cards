@@ -355,7 +355,13 @@ export function cardExists(dir, id) {
  */
 export function readCardFile(dir, id, logger) {
   if (!isValidCardId(id)) return undefined
-  return validateCard(readJsonFile(cardPath(dir, id), logger), id, logger)
+  const parsed = readJsonFile(cardPath(dir, id), logger)
+  // An absent or unreadable file has already reported itself where that was
+  // worth doing. Handing its undefined to validateCard would warn a second
+  // time, and about something that is not a format problem at all - the same
+  // double-warning loadCardLibrary steps over for the same reason.
+  if (parsed === undefined) return undefined
+  return validateCard(parsed, id, logger)
 }
 
 /**

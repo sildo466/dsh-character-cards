@@ -260,7 +260,10 @@ test('writeCardFile refuses an unsafe id and writes nothing', () => {
   const result = writeCardFile(dir, { dshcd: 1, id: '../escape' }, logger)
   assert.equal(result.ok, false)
   assert.equal(result.code, 'invalid-id')
-  assert.equal(cardExists(dir, '../escape'), false)
+  // `cardExists` short-circuits on the whitelist without touching the
+  // filesystem, so it would pass even if a file had been written. The empty
+  // listing is the evidence that nothing was.
+  assert.deepEqual(readdirSync(dir), [])
 })
 
 test('writeCardFile refuses a card that fails inspection', () => {

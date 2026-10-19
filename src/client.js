@@ -382,6 +382,19 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /** The description row. Metadata only - `renderCard` never reads it, and
+     * nothing in the prompt depends on it, but it is part of the format and the
+     * library summary carries it, so the editor lets it be set. */
+    function descriptionField(view, onChange) {
+      return react.createElement('div', { style: { margin: '8px 0' } },
+        react.createElement('div', { style: { opacity: 0.75, marginBottom: '4px' } }, '描述'),
+        react.createElement(Input, {
+          value: view.draft.description ?? '',
+          onChange: (event) => onChange(withField(view.draft, 'description', event.target.value)),
+        }),
+      )
+    }
+
     /** Size and D5 advisories.
      *
      * `preview.error` covers both a transport failure and a card the host
@@ -487,10 +500,16 @@ window.__ModuleLoader__.load({
           react.createElement(Button, { size: 'sm', onClick: leave },
             dirty ? (confirmDiscard ? '确认放弃？' : '放弃修改') : '返回'),
           idLockedField(view, editDraft),
-          react.createElement(Button, { size: 'sm', onClick: () => { void save() }, disabled: !canSave }, '保存'),
+          react.createElement(Button, {
+            size: 'sm',
+            variant: dirty ? 'primary' : 'ghost',
+            onClick: () => { void save() },
+            disabled: !canSave,
+          }, '保存'),
         ),
         saveError === null ? null : react.createElement('p', { style: { opacity: 0.8 } }, saveError),
         nameField(view, editDraft),
+        descriptionField(view, editDraft),
         groups.map(group => react.createElement(EditorGroup, {
           key: group.key,
           group,
@@ -518,6 +537,7 @@ window.__ModuleLoader__.load({
       // and reloaded the list regardless, so a host error vanished. One message,
       // cleared by the next success - not a notification system.
       const [applyError, setApplyError] = react.useState(null)
+      const [openError, setOpenError] = react.useState(null)
 
       // `reload` takes an optional "still mounted" predicate so the mount
       // effect can discard a response that lands after unmount rather than
@@ -538,8 +558,16 @@ window.__ModuleLoader__.load({
       }, [])
 
       const openEditor = async (cardId) => {
+        setOpenError(null)
         const payload = cardId === undefined ? undefined : await getJson(`/cards/${encodeURIComponent(cardId)}`)
-        if (cardId !== undefined && payload === undefined) return
+        if (cardId !== undefined && payload === undefined) {
+          // A row whose card cannot be loaded would otherwise be a silent no-op,
+          // which is the worst shape a failure can take: the user cannot tell
+          // whether the click missed or the card is broken. The likeliest cause
+          // is a file removed or renamed outside the editor.
+          setOpenError(`无法打开「${cardId}」：卡片文件可能已被外部删除或改名。`)
+          return
+        }
         const original = payload === undefined ? null : payload.card
         setView({
           kind: 'editor',
@@ -603,6 +631,7 @@ window.__ModuleLoader__.load({
       return react.createElement(
         'div',
         { style: { lineHeight: 1.7 } },
+        openError === null ? null : react.createElement('p', { style: { opacity: 0.8 } }, openError),
         applyError === null ? null : react.createElement('p', { style: { opacity: 0.8 } }, applyError),
         react.createElement('p', { style: { margin: '0 0 12px', display: 'flex', gap: '12px', alignItems: 'center' } },
           react.createElement('span', null, '默认卡 '),

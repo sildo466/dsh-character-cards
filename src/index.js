@@ -2,7 +2,7 @@
 //
 // Cordis wiring only: the loopback-only HTTP surface, the agent/created bind,
 // and the diagnostic state behind /status. The .dshcd format itself - parsing,
-// rendering, budgeting, the card library, and the resolution order - lives in
+// rendering, measuring, the card library, and the resolution order - lives in
 // ./cards.js, which takes its directory as a parameter so it can be exercised
 // without a Cordis context.
 //
@@ -198,12 +198,12 @@ function pathnameOf(req) {
  * Decode the id a prefix route was addressed with.
  *
  * A malformed percent-escape (`/%`, `/%zz`, `/%e0`) reaches a prefix handler:
- * the prefix still matches, and `decodeURIComponent` throws `URIError`. That
- * throw does not answer the request - it rejects the async handler's promise,
- * which is a different failure class entirely, and on this runtime's default
- * rejection handling it can terminate the host process instead of producing a
- * response. Callers get undefined and answer it the way they answer any other
- * unusable id.
+ * the prefix still matches, and `decodeURIComponent` throws `URIError`. The
+ * host catches that per request and answers an empty 400 (packages/host/
+ * webserver/src/index.ts:235-249), so it cannot take the process down - but
+ * the request loses its own diagnosable answer and gets a bodyless one this
+ * plugin's client cannot read. Callers get undefined instead, and answer it
+ * the way they answer any other unusable id.
  * @param {string} rest - the pathname with the route prefix and leading slash removed.
  * @returns {string | undefined} the decoded value, or undefined when undecodable.
  */
@@ -543,6 +543,30 @@ function registerRoutes(webServer, ctx) {
       const inspected = inspectCard(body.card)
       if ('error' in inspected) {
         sendJson(res, 200, { ok: true, valid: false, error: inspected.error, warnings: [] })
+        return
+      }
+      // The id is as much a part of whether this card can be saved as its
+      // version is, so preview reports it the same way. Without this the
+      // editor's Save gate would sit enabled on a draft that every write route
+      // is certain to refuse - and, because the editor pins the version, it
+      // would in practice never be disabled at all.
+      const id = text(inspected.card.id)
+      if (id === undefined || !isValidCardId(id)) {
+        sendJson(res, 200, {
+          ok: true,
+          valid: false,
+          error: 'id must match ^[a-z0-9][a-z0-9-]*$ and be at most 64 characters',
+          warnings: [],
+        })
+        return
+      }
+      if (RESERVED_CARD_IDS.has(id)) {
+        sendJson(res, 200, {
+          ok: true,
+          valid: false,
+          error: `"${id}" is reserved by the route table; pick another id`,
+          warnings: [],
+        })
         return
       }
       const rendered = renderCard(inspected.card)

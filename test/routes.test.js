@@ -303,6 +303,41 @@ test('POST /cards/preview warns past 12 rules and past 60 characters', async () 
   assert.deepEqual(codes, ['rule-too-long', 'too-many-rules'])
 })
 
+test('POST /cards/preview stays quiet at exactly the D5 limits', async () => {
+  // 12 and 60 are the last accepted values. Only the two tests together pin the
+  // comparison as strictly greater-than, which is where an off-by-one edit
+  // would otherwise slip through.
+  const rules = Array.from({ length: 12 }, (_, index) => `rule ${index}`)
+  rules[0] = 'x'.repeat(60)
+  const res = await harness().call('/dsh-character-cards/cards/preview', {
+    method: 'POST',
+    body: { card: { dshcd: 1, id: 'p', constraints: rules } },
+  })
+  assert.equal(res.body.valid, true)
+  assert.deepEqual(res.body.warnings, [])
+})
+
+test('POST /cards/preview refuses every id the create route would refuse', async () => {
+  // The editor's Save gate reads `valid`, so preview has to answer the same
+  // question the create route will: an id it accepts here must be one create
+  // will not reject a moment later.
+  const unusable = ['', 'Upper', 'has space', '../escape', 'a'.repeat(65), 'preview', 42]
+  for (const id of unusable) {
+    const res = await harness().call('/dsh-character-cards/cards/preview', {
+      method: 'POST',
+      body: { card: { dshcd: 1, id } },
+    })
+    assert.equal(res.body.valid, false, `id ${JSON.stringify(id)} should be invalid`)
+    assert.equal(typeof res.body.error, 'string')
+  }
+
+  const fine = await harness().call('/dsh-character-cards/cards/preview', {
+    method: 'POST',
+    body: { card: { dshcd: 1, id: 'fine' } },
+  })
+  assert.equal(fine.body.valid, true)
+})
+
 test('POST /cards creates a card and refuses to overwrite an existing one', async () => {
   const card = { dshcd: 1, id: 'brand-new', name: '新卡' }
   const created = await harness().call('/dsh-character-cards/cards', { method: 'POST', body: { card } })
