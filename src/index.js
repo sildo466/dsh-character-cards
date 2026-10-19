@@ -342,12 +342,19 @@ function registerSection(agent, rendered, logger) {
 
 /**
  * The card library as a picker sees it.
+ *
+ * Each card carries how many live sessions resolve to it right now, so a card
+ * whose edit is not yet live is distinguishable from one nobody is using.
+ * @param {object} ctx - plugin context carrying the agent registry.
  * @returns {{ defaultCard: string | null, cards: object[] }} the snapshot.
  */
-function librarySnapshot() {
+function librarySnapshot(ctx) {
   return {
     defaultCard: readDefaultCardId(CARDS_DIR) ?? null,
-    cards: listCardSummaries(CARDS_DIR, {}),
+    cards: listCardSummaries(CARDS_DIR, {}).map(summary => ({
+      ...summary,
+      sessionsUsing: sessionsUsing(ctx, summary.id).length,
+    })),
   }
 }
 
@@ -395,6 +402,31 @@ function rebind(agent, sessionId, logger) {
 }
 
 /**
+ * Live sessions currently resolving to one card.
+ *
+ * Computed from the same resolution the binder uses, so the count can never
+ * disagree with what a session would actually get.
+ * @param {object} ctx - plugin context carrying the agent registry.
+ * @param {string} cardId - the card to look for.
+ * @returns {string[]} their session ids.
+ */
+function sessionsUsing(ctx, cardId) {
+  const agents = ctx.get('agents')
+  if (agents === undefined) return []
+  try {
+    return agents.list()
+      .filter(agent => {
+        const resolved = resolveCardId(CARDS_DIR, agent.id, {})
+        return resolved !== undefined && resolved.cardId === cardId
+      })
+      .map(agent => agent.id)
+  } catch (error) {
+    recordError(error)
+    return []
+  }
+}
+
+/**
  * Register this plugin's HTTP routes on a Web surface.
  * @param {{ register: (route: object) => () => void }} webServer - the Web server service.
  * @param {import('@deepseek-ai/cordis').Context} ctx - context owning the registrations and serving the agent lookup.
@@ -421,7 +453,7 @@ function registerRoutes(webServer, ctx) {
     handler: async (req, res) => {
       if (!guard(req, res)) return
       if (req.method !== 'POST') {
-        sendJson(res, 200, { ok: true, ...librarySnapshot() })
+        sendJson(res, 200, { ok: true, ...librarySnapshot(ctx) })
         return
       }
       let body = {}
@@ -490,18 +522,38 @@ function registerRoutes(webServer, ctx) {
     },
   }))
 
-  // One card by id, plus the write that changes it. A single prefix
-  // registration serves GET and PUT because the route table rejects a duplicate
-  // (kind, path), and the matcher takes a prefix only when it equals the path or
-  // is followed by a slash - so this is registered without a trailing one.
+  // One card by id, plus the write that changes it and the apply that pushes an
+  // edit to the live sessions using it. A single prefix registration serves all
+  // of them because the route table rejects a duplicate (kind, path), and the
+  // matcher takes a prefix only when it equals the path or is followed by a
+  // slash - so this is registered without a trailing one.
   ctx.effect(() => webServer.register({
     kind: 'prefix',
     path: `${ROUTE_PREFIX}/cards`,
     handler: async (req, res) => {
       if (!guard(req, res)) return
-      const id = decodeURIComponent(pathnameOf(req).slice(`${ROUTE_PREFIX}/cards`.length).replace(/^\//, ''))
+      const rest = decodeURIComponent(pathnameOf(req).slice(`${ROUTE_PREFIX}/cards`.length).replace(/^\//, ''))
+      const wantsApply = rest.endsWith('/apply')
+      const id = wantsApply ? rest.slice(0, -'/apply'.length) : rest
       if (!isValidCardId(id)) {
         sendJson(res, 400, { ok: false, code: 'invalid-id', error: 'id must match ^[a-z0-9][a-z0-9-]*$' })
+        return
+      }
+
+      // Saving a card does not rebind anyone: an edit silently rewriting a live
+      // session's identity is a surprise, so re-applying is its own explicit
+      // request and this is the only route that performs it.
+      if (wantsApply) {
+        if (req.method !== 'POST') {
+          sendJson(res, 405, { ok: false, code: 'method', error: 'POST only' })
+          return
+        }
+        const ids = sessionsUsing(ctx, id)
+        for (const sessionId of ids) {
+          const agent = ctx.get('agents')?.get(sessionId)
+          if (agent !== undefined) rebind(agent, sessionId, ctx.logger ?? {})
+        }
+        sendJson(res, 200, { ok: true, applied: ids.length })
         return
       }
 
@@ -511,7 +563,7 @@ function registerRoutes(webServer, ctx) {
           sendJson(res, 404, { ok: false, code: 'not-found', error: `no card "${id}"` })
           return
         }
-        sendJson(res, 200, { ok: true, id, card })
+        sendJson(res, 200, { ok: true, id, card, sessionsUsing: sessionsUsing(ctx, id) })
         return
       }
 
@@ -654,7 +706,7 @@ function registerRoutes(webServer, ctx) {
         ok: true,
         cardsDir: CARDS_DIR,
         sessionOverrides: readSessionOverrides(CARDS_DIR, {}),
-        ...librarySnapshot(),
+        ...librarySnapshot(ctx),
         agentsAtLoad: diag.agentsAtLoad,
         subscribed: diag.subscribed,
         listenerCalls: diag.listenerCalls,

@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { cardExists, readCardFile, readDefaultCardId, readSessionOverrides, writeCardFile } from '../src/cards.js'
+import { cardExists, readCardFile, readDefaultCardId, readSessionOverrides, setSessionOverride, writeCardFile } from '../src/cards.js'
 
 // CARDS_DIR is resolved from DSH_HOME when index.js is evaluated, so the temp
 // home must be built and exported before the dynamic import below.
@@ -362,4 +362,54 @@ test('GET /cards/<id> returns the raw card', async () => {
 
   const missing = await harness().call('/dsh-character-cards/cards/nope')
   assert.equal(missing.status, 404)
+})
+
+test('POST /cards/<id>/apply rebinds only the sessions using that card', async () => {
+  const using = agentStub('session-using')
+  const other = agentStub('session-other')
+  writeCardFile(cardsDir, { dshcd: 1, id: 'apply-me', identity: { role: '审阅者' } }, {})
+  setSessionOverride(cardsDir, 'session-using', 'apply-me', {})
+
+  const routes = harness({
+    get: (id) => ({ 'session-using': using, 'session-other': other })[id],
+    list: () => [using, other],
+  })
+
+  // Mounting the plugin binds every live agent, so clear what that produced:
+  // this assertion is about what the apply route adds, not about boot.
+  await new Promise(resolve => setTimeout(resolve, 0))
+  using.events.length = 0
+  other.events.length = 0
+
+  const res = await routes.call('/dsh-character-cards/cards/apply-me/apply', { method: 'POST', body: {} })
+  assert.equal(res.status, 200)
+  assert.equal(res.body.applied, 1)
+
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.equal(using.events.some(event => event.startsWith('register:')), true)
+  assert.deepEqual(other.events, [])
+})
+
+test('GET /cards/<id> counts the sessions using it', async () => {
+  const using = agentStub('session-counted')
+  writeCardFile(cardsDir, { dshcd: 1, id: 'counted', identity: { role: 'x' } }, {})
+  setSessionOverride(cardsDir, 'session-counted', 'counted', {})
+
+  const routes = harness({
+    get: (id) => (id === 'session-counted' ? using : undefined),
+    list: () => [using],
+  })
+  const res = await routes.call('/dsh-character-cards/cards/counted')
+  assert.deepEqual(res.body.sessionsUsing, ['session-counted'])
+})
+
+test('GET /cards carries the per-card usage count', async () => {
+  const using = agentStub('session-list')
+  writeCardFile(cardsDir, { dshcd: 1, id: 'listed', identity: { role: 'x' } }, {})
+  setSessionOverride(cardsDir, 'session-list', 'listed', {})
+
+  const routes = harness({ get: () => using, list: () => [using] })
+  const res = await routes.call('/dsh-character-cards/cards')
+  const listed = res.body.cards.find(card => card.id === 'listed')
+  assert.equal(listed.sessionsUsing, 1)
 })
