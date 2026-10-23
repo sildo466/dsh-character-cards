@@ -65,7 +65,7 @@
    - 文件不存在视为成功。
 3. `detachOverridesForCard(dir, cardId, logger)`
    - 读取覆盖表，把所有值等于 `cardId` 的项改成 `null`（显式「不使用」）。
-   - 一次写回；返回受影响的会话数。
+   - 一次写回；返回 `{ ok, detached }`，`detached` 是受影响的会话数。
    - 其他项（包括本来为 `null` 的项）保持不变。
 
 ### 4.2 `DELETE /dsh-character-cards/cards/<id>`
@@ -114,11 +114,13 @@
    - 否则依次尝试 `base-2`、`base-3`……
    - 后缀拼接前截断 `base`，保证结果不超过 64 字符。
 2. `prepareImport(card, ids)`
-   - `structuredClone` 原对象，只替换 `id`。
+   - `structuredClone` 原对象，只替换 `id` 和 `dshcd`。
    - id 先清洗：转小写，非法字符折叠为 `-`，去掉首尾 `-`，截断到 64。
    - 清洗后为空则回退为 `imported-card`。
-   - 返回 `{ card, renamed, versionWarning }`；`versionWarning` 在 `dshcd !== 1`
-     （包括缺失）时为 true。
+   - `dshcd !== 1`（包括缺失）时记录警告，并把副本的 `dshcd` 改写为 `1`：
+     现有写入路由只接受 v1，改写是在「接受并警告」策略下让导入落盘的唯一方式；
+     其他未知字段原样保留。
+   - 返回 `{ card, renamed, versionWarning }`。
 
 ### 5.3 流程
 
