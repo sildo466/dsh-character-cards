@@ -2,16 +2,28 @@
 
 English | [简体中文](README.zh.md)
 
-Switchable identity cards for [DeepSeek Harness](https://github.com/deepseek-ai) sessions: persona, tone, code style, and hard constraints injected as one session-scoped prompt section.
+[![DSH](https://img.shields.io/badge/DSH-%3E%3D0.2.0--rc.2-4c6ef5)](#requirements)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/sildo466/dsh-character-cards/blob/master/LICENSE)
 
-## Features
+**Give every conversation its own personality — without touching the system prompt.**
 
-- Five structured groups: identity, voice, code style, workflow, and hard constraints.
-- A global default card plus per-session overrides; a session can also explicitly take no card.
-- A card picker beside the composer and a full editor in Settings.
-- Live preview with token count and rule advisories.
-- Explicit "re-apply" for sessions already running on a card; saving never rebinds anyone silently.
-- Import, export, copy, and delete single `.dshcd` files. Unknown fields survive a round trip.
+One chat wants a patient teacher. The next wants a blunt code reviewer. Another wants a character to talk to. Character Cards lets each DSH session carry its own identity: who the agent is, how it talks, how it writes code, and what it must never do.
+
+Edit cards in Settings, switch them beside the composer, and change them mid-conversation without losing context.
+
+## Why not just use a preset?
+
+An Agent preset is a whole agent: tools, plugins, composition. It is chosen when the session is created and stays fixed.
+
+A character card is one lightweight layer on top: a small JSON file with a persona and style. It works with any preset, and you can switch it at any time.
+
+| | Agent preset | Character card |
+|---|---|---|
+| Scope | Whole agent | Persona and style |
+| When it applies | At session creation | Immediately, any time |
+| Switch mid-conversation | No | Yes |
+| Authoring | YAML / files | Visual editor |
+| Share | Install a package | Send one `.dshcd` file |
 
 ## Requirements
 
@@ -20,11 +32,11 @@ Switchable identity cards for [DeepSeek Harness](https://github.com/deepseek-ai)
 
 ## Install
 
-From npm:
-
 ```sh
 dsh plugin --profile <profile> add dsh-character-cards
 ```
+
+Desktop client: open Settings -> Plugins, install `dsh-character-cards`, then restart the app.
 
 From GitHub:
 
@@ -32,73 +44,57 @@ From GitHub:
 dsh plugin --profile <profile> add github:sildo466/dsh-character-cards
 ```
 
-On the desktop client, install `dsh-character-cards` (or `sildo466/dsh-character-cards`) from Settings -> Plugins. The desktop profile is app-managed, so install inside the app rather than through the CLI.
+The install is the only step that needs a restart. Creating, editing, and switching cards take effect immediately.
 
-For local development:
-
-```sh
-dsh plugin --profile <profile> add link:/path/to/dsh-character-cards
-```
-
-## Usage
+## Quick start
 
 1. Open Settings -> 角色卡.
-2. Create a card, fill the identity and style fields, and save.
-3. Pick the default card at the top of the page.
-4. In a conversation, use the card picker beside the composer to pin one session, follow the default, or take no card.
+2. Click 新建卡片.
+3. Write the character: who they are, how they speak, how they work.
+4. Pick it beside the composer for the current session, or set it as the default for new sessions.
 
-Saving a card writes it to disk. A running session keeps the version it started with; press "重新应用" on the card row (or the same action in the editor) to push the new version into live sessions.
+## Switching
 
-## Card format
+The picker beside the composer has three kinds of choice:
 
-A card is one `.dshcd` JSON file:
+- **A specific card** — pin this session to that character.
+- **Follow the default** — use whatever the global default is.
+- **No character card** — leave this session on the host's normal persona.
 
-```json
-{
-  "dshcd": 1,
-  "id": "patient-teacher",
-  "name": "Patient Teacher",
-  "description": "Explains code step by step.",
-  "identity": {
-    "role": "Patient teacher",
-    "expertise": ["TypeScript", "testing"],
-    "background": "Ten years of production systems."
-  },
-  "voice": {
-    "tone": "Calm and direct",
-    "verbosity": "Concise",
-    "traits": ["encouraging"],
-    "avoid": ["emoji"]
-  },
-  "code": {
-    "naming": "Descriptive",
-    "comments": "Only for non-obvious decisions",
-    "tests": "Test behavior, not mocks"
-  },
-  "workflow": {
-    "ask_when_unclear": true,
-    "verify_before_claim": true
-  },
-  "constraints": ["Lead with the conclusion"]
-}
-```
+Switch as often as you like. The conversation context stays; only the identity changes.
 
-Fields this build does not know are preserved on save, so a card can carry forward-compatible data.
+## What you can shape
 
-## Lifecycle
+The editor groups fields the way you would brief a new teammate:
 
-- Export downloads the exact stored JSON as `<id>.dshcd`.
-- Import accepts one `.dshcd`/JSON object up to 1 MB, sanitizes the id, and auto-renames on conflict.
-- Copy clones the whole card and names it `<name> 副本`.
-- Delete removes the file, turns pins to an explicit "no card", clears the default pointer when it names the card, and unbinds live sessions.
+- **Identity** — who they are, what they know, what they care about.
+- **Voice** — tone, pacing, pet phrases, words to avoid.
+- **Code** — naming, comments, testing habits.
+- **Workflow** — when to ask, when to verify, how to plan.
+- **Guardrails** — the lines they never cross.
 
-## Development
+## Saving and applying
 
-```sh
-node --test
-```
+Saving writes the card to disk. It does **not** silently change a conversation that is already running.
 
-No build step: the package ships its Node host half in `src/index.js` and its browser bundle in `src/client.js`.
+When a card is in use, its row shows how many sessions are on it. Press 重新应用 to push the saved version into those live sessions.
+
+## Make it yours
+
+- **Import / export** — a card is one `.dshcd` file. Export it, send it to a friend, import it back. Fields this build does not know are preserved.
+- **Copy** — duplicate a card and edit the copy; the original stays untouched.
+- **Delete** — removes the card, turns pinned sessions into "no card", and clears the default if it pointed there.
+
+## Known limitations
+
+- **Roleplay presets already carry a complete persona.** If a preset is already playing a character, use one or the other; stacking a card on top can produce two competing identities.
+- **A running session keeps the version it started with** until you press 重新应用.
+- **The interface is currently Chinese.** Cards themselves can be written in any language.
+- **The desktop profile is app-managed.** Install and update inside the desktop client rather than through the CLI.
+
+## Documentation
+
+- [Card format, HTTP routes, and development](https://github.com/sildo466/dsh-character-cards/blob/master/docs/engineering.md)
 
 ## License
 

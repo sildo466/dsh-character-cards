@@ -8,5 +8,8 @@ node_modules/
 # Brainstorming visual companion scratch space.
 .superpowers/
 
+# Internal implementation plans (kept local, not published).
+docs/superpowers/plans/
+
 # Local agent instructions.
 CLAUDE.md
