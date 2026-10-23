@@ -224,9 +224,27 @@ window.__ModuleLoader__.load({
           title: '身份',
           badge: '低风险 · 影响视角与用词',
           fields: [
-            { path: 'identity.role', label: '角色', kind: 'text' },
-            { path: 'identity.expertise', label: '专长', kind: 'list' },
-            { path: 'identity.background', label: '背景', kind: 'text' },
+            {
+              path: 'identity.role',
+              label: '角色',
+              kind: 'text',
+              help: '写一句它是谁，决定它怎么理解任务。',
+              placeholder: '例如：耐心的代码导师',
+            },
+            {
+              path: 'identity.expertise',
+              label: '专长',
+              kind: 'list',
+              help: '它特别擅长的领域，每行一个。',
+              placeholder: '例如：TypeScript',
+            },
+            {
+              path: 'identity.background',
+              label: '背景',
+              kind: 'text',
+              help: '影响它举例和类比的经历。',
+              placeholder: '例如：十年后端经验，带过新人',
+            },
           ],
         },
         {
@@ -234,12 +252,48 @@ window.__ModuleLoader__.load({
           title: '表达',
           badge: '安全 · 只影响表达，不影响正确性',
           fields: [
-            { path: 'voice.tone', label: '语气', kind: 'text' },
-            { path: 'voice.verbosity', label: '篇幅', kind: 'text' },
-            { path: 'voice.formality', label: '正式度', kind: 'text' },
-            { path: 'voice.humor', label: '幽默', kind: 'text' },
-            { path: 'voice.traits', label: '性格', kind: 'list' },
-            { path: 'voice.avoid', label: '禁止', kind: 'list' },
+            {
+              path: 'voice.tone',
+              label: '语气',
+              kind: 'text',
+              help: '整体语气。',
+              placeholder: '例如：平静、直接',
+            },
+            {
+              path: 'voice.verbosity',
+              label: '篇幅',
+              kind: 'text',
+              help: '回答的详细程度。',
+              placeholder: '例如：简短，先给结论',
+            },
+            {
+              path: 'voice.formality',
+              label: '正式度',
+              kind: 'text',
+              help: '正式还是口语化。',
+              placeholder: '例如：口语化，不用敬语',
+            },
+            {
+              path: 'voice.humor',
+              label: '幽默',
+              kind: 'text',
+              help: '什么时候开玩笑、开多大；不想幽默就写“不幽默”。',
+              placeholder: '例如：偶尔冷幽默，不拿用户开玩笑',
+            },
+            {
+              path: 'voice.traits',
+              label: '性格',
+              kind: 'list',
+              help: '性格特征，每行一个。',
+              placeholder: '例如：耐心',
+            },
+            {
+              path: 'voice.avoid',
+              label: '禁止',
+              kind: 'list',
+              help: '明确禁止的表达，每行一个。',
+              placeholder: '例如：emoji',
+            },
           ],
         },
         {
@@ -247,13 +301,55 @@ window.__ModuleLoader__.load({
           title: '代码风格',
           badge: '会改变代码 · 影响产出质量与风格',
           fields: [
-            { path: 'code.naming', label: '命名', kind: 'text' },
-            { path: 'code.comments', label: '注释', kind: 'text' },
-            { path: 'code.error_handling', label: '错误处理', kind: 'text' },
-            { path: 'code.abstraction', label: '抽象', kind: 'text' },
-            { path: 'code.dependencies', label: '依赖', kind: 'text' },
-            { path: 'code.tests', label: '测试', kind: 'text' },
-            { path: 'code.commit_style', label: '提交信息', kind: 'text' },
+            {
+              path: 'code.naming',
+              label: '命名',
+              kind: 'text',
+              help: '变量和函数怎么命名。',
+              placeholder: '例如：描述性命名，不用缩写',
+            },
+            {
+              path: 'code.comments',
+              label: '注释',
+              kind: 'text',
+              help: '什么时候写注释。',
+              placeholder: '例如：只解释不明显的决定',
+            },
+            {
+              path: 'code.error_handling',
+              label: '错误处理',
+              kind: 'text',
+              help: '出错时怎么处理。',
+              placeholder: '例如：显式返回错误，不吞异常',
+            },
+            {
+              path: 'code.abstraction',
+              label: '抽象',
+              kind: 'text',
+              help: '抽象到什么程度。',
+              placeholder: '例如：三行重复再抽函数',
+            },
+            {
+              path: 'code.dependencies',
+              label: '依赖',
+              kind: 'text',
+              help: '能不能新增依赖。',
+              placeholder: '例如：优先标准库，新增依赖先问',
+            },
+            {
+              path: 'code.tests',
+              label: '测试',
+              kind: 'text',
+              help: '测试怎么写。',
+              placeholder: '例如：测行为，不测 mock',
+            },
+            {
+              path: 'code.commit_style',
+              label: '提交信息',
+              kind: 'text',
+              help: '提交信息怎么写。',
+              placeholder: '例如：Conventional Commits',
+            },
           ],
         },
         {
@@ -261,9 +357,25 @@ window.__ModuleLoader__.load({
           title: '工作方式',
           badge: '高风险 · 影响行为决策',
           fields: [
-            { path: 'workflow.plan', label: '计划', kind: 'text' },
-            { path: 'workflow.ask_when_unclear', label: '需求不清就问', kind: 'bool' },
-            { path: 'workflow.verify_before_claim', label: '完成前先验证', kind: 'bool' },
+            {
+              path: 'workflow.plan',
+              label: '计划',
+              kind: 'text',
+              help: '复杂任务开始前怎么规划。',
+              placeholder: '例如：先列步骤再动手',
+            },
+            {
+              path: 'workflow.ask_when_unclear',
+              label: '需求不清就问',
+              kind: 'bool',
+              help: '不确定时先问，而不是猜。',
+            },
+            {
+              path: 'workflow.verify_before_claim',
+              label: '完成前先验证',
+              kind: 'bool',
+              help: '说“完成”之前先跑验证。',
+            },
           ],
         },
         {
@@ -271,7 +383,13 @@ window.__ModuleLoader__.load({
           title: '硬性约束',
           badge: '最高优先级 · 逐条遵守',
           fields: [
-            { path: 'constraints', label: '约束', kind: 'list' },
+            {
+              path: 'constraints',
+              label: '约束',
+              kind: 'list',
+              help: '绝对不能违反的规则，每行一条，优先级最高。',
+              placeholder: '例如：先给结论',
+            },
           ],
         },
       ]
@@ -419,12 +537,19 @@ window.__ModuleLoader__.load({
       if (field.kind === 'bool') {
         return react.createElement(
           'div',
-          { className: 'dshcc-rowline' },
-          react.createElement(Pill, {
-            active: value === true,
-            onClick: () => onChange(withField(draft, field.path, value !== true)),
-          }, value === true ? '已开启' : '已关闭'),
-          react.createElement('span', { className: 'dshcc-meta' }, field.label),
+          { className: 'dshcc-field' },
+          react.createElement(
+            'div',
+            { className: 'dshcc-rowline' },
+            react.createElement(Pill, {
+              active: value === true,
+              onClick: () => onChange(withField(draft, field.path, value !== true)),
+            }, value === true ? '已开启' : '已关闭'),
+            react.createElement('span', { className: 'dshcc-label' }, field.label),
+          ),
+          field.help === undefined
+            ? null
+            : react.createElement('span', { className: 'dshcc-meta' }, field.help),
         )
       }
 
@@ -438,7 +563,7 @@ window.__ModuleLoader__.load({
         }
         return react.createElement(
           Field,
-          { label: field.label },
+          { label: field.label, hint: field.help },
           entries.length === 0
             ? react.createElement('span', { className: 'dshcc-meta' }, '暂无条目')
             : entries.map((entry, index) => react.createElement(
@@ -446,6 +571,7 @@ window.__ModuleLoader__.load({
                 { key: String(index), className: 'dshcc-rowline' },
                 react.createElement(Input, {
                   className: 'dshcc-inputwrap',
+                  placeholder: field.placeholder,
                   value: String(entry),
                   onChange: (event) => replace(index, event.target.value),
                 }),
@@ -465,9 +591,10 @@ window.__ModuleLoader__.load({
 
       return react.createElement(
         Field,
-        { label: field.label },
+        { label: field.label, hint: field.help },
         react.createElement(Input, {
           className: 'dshcc-inputwrap',
+          placeholder: field.placeholder,
           value: typeof value === 'string' ? value : '',
           onChange: (event) => onChange(withField(draft, field.path, event.target.value)),
         }),

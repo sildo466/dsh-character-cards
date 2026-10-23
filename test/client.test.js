@@ -197,6 +197,20 @@ test('editorGroups carries the five groups with their D2 badges', () => {
   assert.equal(groups[0].fields.some(field => field.path === 'identity.role'), true)
 })
 
+test('every editor field explains what to fill in', () => {
+  const { editorGroups } = loaded.factory(makeFakeRequire())
+  for (const group of editorGroups()) {
+    for (const field of group.fields) {
+      assert.equal(typeof field.help, 'string', `${field.path} needs help text`)
+      assert.ok(field.help.length > 0, `${field.path} has empty help text`)
+      if (field.kind !== 'bool') {
+        assert.equal(typeof field.placeholder, 'string', `${field.path} needs a placeholder`)
+        assert.ok(field.placeholder.length > 0, `${field.path} has an empty placeholder`)
+      }
+    }
+  }
+})
+
 test('isDirty compares structurally, not by key order', () => {
   const { isDirty } = loaded.factory(makeFakeRequire())
   assert.equal(isDirty({ a: 1, b: { c: 2 } }, { a: 1, b: { c: 2 } }), false)
