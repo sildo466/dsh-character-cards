@@ -402,7 +402,7 @@ node --import file:///C:/WinTool/deepseek-harness/node_modules/tsx/dist/esm/inde
 
 ---
 
-## 9. 进度与下一步（2026-10-19）
+## 9. 进度与下一步（2026-10-23）
 
 第 4 节的三个验证**已全部完成**，结论已补回本文档；D3 已按实测修正；D9/D10/D11 为新增决策。
 
@@ -415,8 +415,8 @@ node --import file:///C:/WinTool/deepseek-harness/node_modules/tsx/dist/esm/inde
 | **P1 下半** | 软卡对比 | 同一段代码，两张卡输出语气/代码风格明显不同 | ✅ 完成 |
 | **P1 收尾** | 卡片库、解析顺序、默认指针、per-session 覆盖、D6 保留字段 | 目录里放多张卡，改 `default` 文件换全局卡 | ✅ 完成 |
 | **P2** | 运行时重绑 + 宿主路由 + 已验证 slot 上的切换入口 | 同一 session 内点一下切卡，下一轮就变 | ✅ 完成 |
-| **P3** | 编辑器：新建 / 编辑 / 保存、实时预览、显式「重新应用」 | 设置页里改一张卡并保存，不离开 UI | ✅ 完成 |
-| **P4** | 生命周期：导入 / 导出 / 复制 / 删除 | `.dshcd` 零丢失往返 | ✅ 完成 |
+| **P3** | 编辑器：新建 / 编辑 / 保存、实时预览、显式「重新应用」 | 设置页里改一张卡并保存，不离开 UI | ⏳ 实现完成，待活体验证 |
+| **P4** | 生命周期：导入 / 导出 / 复制 / 删除 | `.dshcd` 零丢失往返 | ⏳ 实现完成，待活体验证 |
 
 **P3 的范围由 spec 定稿**（`docs/superpowers/specs/2026-10-19-p3-card-editor-design.md`）：
 只做新建 / 编辑 / 保存，导入导出留给 P4。
@@ -432,7 +432,7 @@ node --import file:///C:/WinTool/deepseek-harness/node_modules/tsx/dist/esm/inde
 真正的选卡 UI 位置留到 P3——技能里写死了「不许猜 slot，必须用 `Slots.listSubTree` 问活体」，
 而那是 Claude Code 结构上做不到、只能靠 dsh 创造模式做的事。
 
-### P3 落地后的接口（宿主端口）
+### P3/P4 落地后的接口（宿主端口）
 
 ```
 GET  /dsh-character-cards/cards              列表 + 默认指针 + 每卡 sessionsUsing

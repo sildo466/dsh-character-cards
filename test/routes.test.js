@@ -511,4 +511,5 @@ test('DELETE detaches pins, clears a default pointer, and unbinds live agents', 
 
   // Restore the shared fixture for later tests.
   writeFileSync(join(cardsDir, 'default'), 'terse\n')
+  writeFileSync(join(cardsDir, 'sessions.json'), '{}\n')
 })

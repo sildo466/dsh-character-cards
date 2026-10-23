@@ -168,7 +168,8 @@ window.__ModuleLoader__.load({
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-+|-+$/g, '')
-      return cleaned.length === 0 ? 'imported-card' : cleaned.slice(0, 64)
+      const truncated = cleaned.slice(0, 64).replace(/-+$/g, '')
+      return truncated.length === 0 ? 'imported-card' : truncated
     }
 
     /**
@@ -183,7 +184,8 @@ window.__ModuleLoader__.load({
       if (!taken.has(root)) return root
       for (let n = 2; ; n += 1) {
         const suffix = `-${n}`
-        const candidate = `${root.slice(0, 64 - suffix.length)}${suffix}`
+        const stem = root.slice(0, 64 - suffix.length).replace(/-+$/g, '')
+        const candidate = `${stem}${suffix}`
         if (!taken.has(candidate)) return candidate
       }
     }
@@ -744,7 +746,11 @@ window.__ModuleLoader__.load({
         if (stillMounted !== undefined && !stillMounted()) return
         setState(payload === undefined
           ? { status: 'error', cards: [], defaultCard: null }
-          : { status: 'ready', cards: payload.cards ?? [], defaultCard: payload.defaultCard ?? null })
+          : {
+              status: 'ready',
+              cards: Array.isArray(payload.cards) ? payload.cards : [],
+              defaultCard: payload.defaultCard ?? null,
+            })
       }
 
       react.useEffect(() => {
@@ -754,6 +760,7 @@ window.__ModuleLoader__.load({
       }, [])
 
       const openEditor = async (cardId) => {
+        setConfirmDelete(null)
         setOpenError(null)
         const payload = cardId === undefined ? undefined : await getJson(`/cards/${encodeURIComponent(cardId)}`)
         if (cardId !== undefined && payload === undefined) {
@@ -822,9 +829,11 @@ window.__ModuleLoader__.load({
           const anchor = document.createElement('a')
           anchor.href = url
           anchor.download = `${cardId}.dshcd`
+          document.body.appendChild(anchor)
           anchor.click()
-          setTimeout(() => URL.revokeObjectURL(url), 0)
-          showNotice('info', `已导出 ${cardId}.dshcd`)
+          anchor.remove()
+          setTimeout(() => URL.revokeObjectURL(url), 60_000)
+          showNotice('info', `已开始下载 ${cardId}.dshcd`)
         } catch {
           showNotice('error', '导出失败：浏览器拒绝下载。')
         }
@@ -838,9 +847,13 @@ window.__ModuleLoader__.load({
           return
         }
         const copy = structuredClone(payload.card)
-        copy.id = uniqueCardId(`${entry.id}-copy`, ids)
         copy.name = `${payload.card.name ?? entry.name ?? entry.id} 副本`
-        const answer = await postJson('/cards', { card: copy })
+        copy.id = uniqueCardId(`${entry.id}-copy`, ids)
+        let answer = await postJson('/cards', { card: copy })
+        if (answer?.code === 'exists') {
+          copy.id = uniqueCardId(`${entry.id}-copy`, [...ids, copy.id])
+          answer = await postJson('/cards', { card: copy })
+        }
         if (answer === undefined || answer.ok !== true) {
           showNotice('error', answer?.error ?? '复制失败')
           return
@@ -854,8 +867,8 @@ window.__ModuleLoader__.load({
         const file = input.files?.[0]
         input.value = ''
         if (file === undefined) return
-        if (file.size > 1024 * 1024) {
-          showNotice('error', '导入失败：文件超过 1 MiB。')
+        if (file.size > 1_000_000) {
+          showNotice('error', '导入失败：文件超过 1 MB。')
           return
         }
         let parsed
@@ -900,7 +913,7 @@ window.__ModuleLoader__.load({
         const warnings = answer.warnings ?? []
         showNotice(warnings.length > 0 ? 'error' : 'info', warnings.length > 0
           ? `已删除 ${entry.id}，但引用清理未完全成功。`
-          : `已删除 ${entry.id}，${answer.detached ?? 0} 个会话已改为不使用。`)
+          : `已删除 ${entry.id}；清除 ${answer.detached ?? 0} 个会话的固定设置，刷新 ${answer.rebound ?? 0} 个运行中的会话。`)
       }
 
       const defaultName = state.cards.find(entry => entry.id === state.defaultCard)?.name
