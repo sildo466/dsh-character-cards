@@ -20,7 +20,10 @@ import { join } from 'node:path'
 import {
   cardExists,
   cardWarnings,
+  clearDefaultCardId,
   clearSessionOverride,
+  deleteCardFile,
+  detachOverridesForCard,
   inspectCard,
   isValidCardId,
   listCardSummaries,
@@ -614,6 +617,40 @@ function registerRoutes(webServer, ctx) {
           if (agent !== undefined) rebind(agent, sessionId, ctx.logger ?? {})
         }
         sendJson(res, 200, { ok: true, applied: ids.length })
+        return
+      }
+
+      if (req.method === 'DELETE') {
+        // Snapshot who resolves to this card before it disappears: after the
+        // unlink they would resolve elsewhere and we could no longer find them.
+        const affected = sessionsUsing(ctx, id)
+        const deleted = deleteCardFile(CARDS_DIR, id, ctx.logger ?? {})
+        if (!deleted.ok) {
+          sendJson(res, deleted.code === 'not-found' ? 404 : 500, {
+            ok: false, code: deleted.code, error: deleted.error,
+          })
+          return
+        }
+
+        // The file is the commit point. Cleanup failures are reported, not
+        // rolled back, so the caller never believes the card still exists.
+        const warnings = []
+        const detached = detachOverridesForCard(CARDS_DIR, id, ctx.logger ?? {})
+        if (!detached.ok) warnings.push('session overrides could not be written')
+        if (readDefaultCardId(CARDS_DIR) === id && !clearDefaultCardId(CARDS_DIR, ctx.logger ?? {})) {
+          warnings.push('default pointer could not be cleared')
+        }
+
+        let rebound = 0
+        const agents = ctx.get('agents')
+        for (const sessionId of affected) {
+          const agent = agents?.get(sessionId)
+          if (agent === undefined) continue
+          rebind(agent, sessionId, ctx.logger ?? {})
+          rebound += 1
+        }
+
+        sendJson(res, 200, { ok: true, id, detached: detached.detached, rebound, warnings })
         return
       }
 

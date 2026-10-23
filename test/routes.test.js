@@ -474,3 +474,41 @@ test('POST /cards refuses an id the route table already owns', async () => {
   assert.equal(res.body.code, 'reserved-id')
   assert.equal(cardExists(cardsDir, 'preview'), false)
 })
+
+test('DELETE /cards/<id> removes the card and reports it', async () => {
+  writeFileSync(join(cardsDir, 'doomed.dshcd'), card('doomed', '临时卡', '审阅者'))
+  const res = await harness().call('/dsh-character-cards/cards/doomed', { method: 'DELETE' })
+  assert.equal(res.status, 200)
+  assert.equal(res.body.ok, true)
+  assert.equal(res.body.id, 'doomed')
+  assert.equal(cardExists(cardsDir, 'doomed'), false)
+})
+
+test('DELETE /cards/<id> is 404 for a missing card', async () => {
+  const res = await harness().call('/dsh-character-cards/cards/ghost', { method: 'DELETE' })
+  assert.equal(res.status, 404)
+  assert.equal(res.body.code, 'not-found')
+})
+
+test('DELETE detaches pins, clears a default pointer, and unbinds live agents', async () => {
+  writeFileSync(join(cardsDir, 'doomed.dshcd'), card('doomed', '临时卡', '导师'))
+  writeFileSync(join(cardsDir, 'default'), 'doomed\n')
+  const agent = agentStub('session-live')
+  const routes = harness({ get: (id) => (id === 'session-live' ? agent : undefined), list: () => [agent] })
+
+  await routes.call('/dsh-character-cards/session/session-live/card', { method: 'POST', body: { cardId: 'doomed' } })
+  await new Promise(resolve => setTimeout(resolve, 0))
+
+  const res = await routes.call('/dsh-character-cards/cards/doomed', { method: 'DELETE' })
+  assert.equal(res.status, 200)
+  assert.equal(res.body.detached, 1)
+  assert.equal(res.body.rebound, 1)
+  assert.equal(readSessionOverrides(cardsDir, {})['session-live'], null)
+  assert.equal(readDefaultCardId(cardsDir), undefined)
+
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.deepEqual(agent.events.slice(-2), ['dispose', 'fiber-dispose'])
+
+  // Restore the shared fixture for later tests.
+  writeFileSync(join(cardsDir, 'default'), 'terse\n')
+})
