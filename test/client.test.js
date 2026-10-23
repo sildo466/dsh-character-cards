@@ -214,3 +214,31 @@ test('nextSelection keeps a still-offered value across a refresh', () => {
   assert.equal(nextSelection(entries, 'card:gone', 'card:a'), 'card:a')
 })
 
+test('uniqueCardId keeps a free base and adds suffixes when taken', () => {
+  const { uniqueCardId } = loaded.factory(makeFakeRequire())
+  assert.equal(uniqueCardId('new-card', []), 'new-card')
+  assert.equal(uniqueCardId('new-card', ['new-card']), 'new-card-2')
+  assert.equal(uniqueCardId('new-card', ['new-card', 'new-card-2']), 'new-card-3')
+  assert.equal(uniqueCardId('My Card', []), 'my-card')
+})
+
+test('uniqueCardId never exceeds the 64 character id limit', () => {
+  const { uniqueCardId } = loaded.factory(makeFakeRequire())
+  const base = 'a'.repeat(64)
+  const id = uniqueCardId(base, [base])
+  assert.equal(id.length, 64)
+  assert.match(id, /^a+-2$/)
+})
+
+test('prepareImport renames, warns on version, and preserves unknown fields', () => {
+  const { prepareImport } = loaded.factory(makeFakeRequire())
+  const source = { dshcd: 2, id: 'Bad ID', name: 'x', futureField: { nested: true } }
+  const prepared = prepareImport(source, ['bad-id'])
+  assert.equal(prepared.card.id, 'bad-id-2')
+  assert.equal(prepared.renamed, true)
+  assert.equal(prepared.versionWarning, true)
+  assert.equal(prepared.card.dshcd, 1)
+  assert.deepEqual(prepared.card.futureField, { nested: true })
+  assert.equal(source.dshcd, 2, 'the parsed input is not mutated')
+})
+

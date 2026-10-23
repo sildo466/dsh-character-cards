@@ -159,6 +159,56 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Coerce any string into a valid card id.
+     * @param value - the requested id.
+     * @returns a lowercase, hyphen-separated id of at most 64 characters.
+     */
+    function sanitizeCardId(value) {
+      const cleaned = String(value ?? '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+      return cleaned.length === 0 ? 'imported-card' : cleaned.slice(0, 64)
+    }
+
+    /**
+     * First free id derived from a base.
+     * @param base - the preferred id.
+     * @param ids - ids already taken.
+     * @returns a valid, unused id.
+     */
+    function uniqueCardId(base, ids) {
+      const taken = new Set(ids)
+      const root = sanitizeCardId(base)
+      if (!taken.has(root)) return root
+      for (let n = 2; ; n += 1) {
+        const suffix = `-${n}`
+        const candidate = `${root.slice(0, 64 - suffix.length)}${suffix}`
+        if (!taken.has(candidate)) return candidate
+      }
+    }
+
+    /**
+     * Prepare a parsed .dshcd for the create route.
+     *
+     * The host write route accepts v1 only. Restamping an unfamiliar version is
+     * how "accept with a warning" is implemented without weakening every other
+     * reader; every unknown field still survives.
+     * @param card - the parsed object.
+     * @param ids - ids already taken.
+     * @returns `{ card, renamed, versionWarning }`.
+     */
+    function prepareImport(card, ids) {
+      const copy = structuredClone(card)
+      const original = copy.id
+      const id = uniqueCardId(sanitizeCardId(original), ids)
+      copy.id = id
+      const versionWarning = copy.dshcd !== 1
+      if (versionWarning) copy.dshcd = 1
+      return { card: copy, renamed: id !== original, versionWarning }
+    }
+
+    /**
      * The five editable groups, in render order, with their D2 impact badges.
      *
      * `kind` decides the control: `text` is one Input, `list` is a row per
@@ -1048,6 +1098,6 @@ window.__ModuleLoader__.load({
     // undefined, and both mounts silently do nothing.
     const inject = ['slots']
 
-    return { apply, inject, editorGroups, fieldOf, initialSelection, isDirty, nextSelection, switcherEntries, switcherMode, withField }
+    return { apply, inject, editorGroups, fieldOf, initialSelection, isDirty, nextSelection, prepareImport, sanitizeCardId, switcherEntries, switcherMode, uniqueCardId, withField }
   },
 })
