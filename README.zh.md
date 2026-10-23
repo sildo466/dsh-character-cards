@@ -20,7 +20,7 @@
 
 ## 安装
 
-npm 发布后：
+从 npm 安装：
 
 ```sh
 dsh plugin --profile <profile> add dsh-character-cards

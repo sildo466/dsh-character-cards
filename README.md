@@ -20,7 +20,7 @@ Switchable identity cards for [DeepSeek Harness](https://github.com/deepseek-ai)
 
 ## Install
 
-From npm, after the first release:
+From npm:
 
 ```sh
 dsh plugin --profile <profile> add dsh-character-cards
