@@ -1,8 +1,8 @@
 # dsh-character-cards
 
-Switchable identity cards for [DeepSeek Harness](https://github.com/deepseek-ai) sessions: persona, tone, code style, and hard constraints injected as one session-scoped prompt section.
+English | [简体中文](README.zh.md)
 
-为 DSH 会话绑定可切换的角色卡：身份、语气、代码风格与硬性约束按会话注入，支持默认卡、单会话覆盖和可视化编辑器。
+Switchable identity cards for [DeepSeek Harness](https://github.com/deepseek-ai) sessions: persona, tone, code style, and hard constraints injected as one session-scoped prompt section.
 
 ## Features
 
