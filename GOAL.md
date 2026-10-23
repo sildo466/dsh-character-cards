@@ -415,8 +415,8 @@ node --import file:///C:/WinTool/deepseek-harness/node_modules/tsx/dist/esm/inde
 | **P1 下半** | 软卡对比 | 同一段代码，两张卡输出语气/代码风格明显不同 | ✅ 完成 |
 | **P1 收尾** | 卡片库、解析顺序、默认指针、per-session 覆盖、D6 保留字段 | 目录里放多张卡，改 `default` 文件换全局卡 | ✅ 完成 |
 | **P2** | 运行时重绑 + 宿主路由 + 已验证 slot 上的切换入口 | 同一 session 内点一下切卡，下一轮就变 | ✅ 完成 |
-| **P3** | 编辑器：新建 / 编辑 / 保存、实时预览、显式「重新应用」 | 设置页里改一张卡并保存，不离开 UI | ⏳ 实现完成，待活体验证 |
-| **P4** | 生命周期：导入 / 导出 / 复制 / 删除 | `.dshcd` 零丢失往返 | 待做 |
+| **P3** | 编辑器：新建 / 编辑 / 保存、实时预览、显式「重新应用」 | 设置页里改一张卡并保存，不离开 UI | ✅ 完成 |
+| **P4** | 生命周期：导入 / 导出 / 复制 / 删除 | `.dshcd` 零丢失往返 | ✅ 完成 |
 
 **P3 的范围由 spec 定稿**（`docs/superpowers/specs/2026-10-19-p3-card-editor-design.md`）：
 只做新建 / 编辑 / 保存，导入导出留给 P4。
@@ -439,6 +439,7 @@ GET  /dsh-character-cards/cards              列表 + 默认指针 + 每卡 sess
 GET  /dsh-character-cards/cards/<id>         卡片原始对象 + sessionsUsing
 POST /dsh-character-cards/cards              新建（id 已存在 → 409）
 PUT  /dsh-character-cards/cards/<id>         更新（不存在 → 404；id 不符 → 400）
+DELETE /dsh-character-cards/cards/<id>       删除（清覆盖表、清默认指针、解绑 live session）
 POST /dsh-character-cards/cards/preview      草稿 → 校验 + token 估算 + D5 告警
 POST /dsh-character-cards/cards/<id>/apply   重新应用到正在用它的 live session
 GET  /dsh-character-cards/session/<id>       某 session 当前生效的卡
