@@ -361,6 +361,18 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /** DELETE JSON, with the same error shape as postJson. */
+    async function deleteJson(path) {
+      try {
+        const res = await fetch(`${ROUTE}${path}`, { method: 'DELETE' })
+        const payload = await res.json().catch(() => ({}))
+        if (res.ok) return payload
+        return { ok: false, code: payload.code ?? 'http', error: payload.error ?? `HTTP ${res.status}` }
+      } catch {
+        return undefined
+      }
+    }
+
     /**
      * Which option a switcher shows before the user touches it.
      *
@@ -718,6 +730,9 @@ window.__ModuleLoader__.load({
       // cleared by the next success - not a notification system.
       const [applyError, setApplyError] = react.useState(null)
       const [openError, setOpenError] = react.useState(null)
+      const [notice, setNotice] = react.useState(null)
+      const [menuFor, setMenuFor] = react.useState(null)
+      const fileInput = react.useRef(null)
 
       // `reload` takes an optional "still mounted" predicate so the mount
       // effect can discard a response that lands after unmount rather than
@@ -785,6 +800,89 @@ window.__ModuleLoader__.load({
         void postJson('/default', { cardId: next })
       }
 
+      const showNotice = (tone, text) => setNotice({ tone, text })
+      const ids = state.cards.map(entry => entry.id)
+      const menuItems = [
+        { id: 'export', label: '导出' },
+        { id: 'copy', label: '复制' },
+      ]
+
+      const exportCard = async (cardId) => {
+        setMenuFor(null)
+        const payload = await getJson(`/cards/${encodeURIComponent(cardId)}`)
+        if (payload?.card === undefined) {
+          showNotice('error', '导出失败：无法读取卡片。')
+          return
+        }
+        try {
+          const blob = new Blob([`${JSON.stringify(payload.card, null, 2)}\n`], { type: 'application/json' })
+          const url = URL.createObjectURL(blob)
+          const anchor = document.createElement('a')
+          anchor.href = url
+          anchor.download = `${cardId}.dshcd`
+          anchor.click()
+          setTimeout(() => URL.revokeObjectURL(url), 0)
+          showNotice('info', `已导出 ${cardId}.dshcd`)
+        } catch {
+          showNotice('error', '导出失败：浏览器拒绝下载。')
+        }
+      }
+
+      const copyCard = async (entry) => {
+        setMenuFor(null)
+        const payload = await getJson(`/cards/${encodeURIComponent(entry.id)}`)
+        if (payload?.card === undefined) {
+          showNotice('error', '复制失败：无法读取卡片。')
+          return
+        }
+        const copy = structuredClone(payload.card)
+        copy.id = uniqueCardId(`${entry.id}-copy`, ids)
+        copy.name = `${payload.card.name ?? entry.name ?? entry.id} 副本`
+        const answer = await postJson('/cards', { card: copy })
+        if (answer === undefined || answer.ok !== true) {
+          showNotice('error', answer?.error ?? '复制失败')
+          return
+        }
+        void reload()
+        showNotice('info', `已复制为 ${copy.id}`)
+      }
+
+      const importFile = async (event) => {
+        const input = event.target
+        const file = input.files?.[0]
+        input.value = ''
+        if (file === undefined) return
+        if (file.size > 1024 * 1024) {
+          showNotice('error', '导入失败：文件超过 1 MiB。')
+          return
+        }
+        let parsed
+        try {
+          parsed = JSON.parse(await file.text())
+        } catch {
+          showNotice('error', '导入失败：不是合法的 JSON。')
+          return
+        }
+        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          showNotice('error', '导入失败：卡片必须是 JSON 对象。')
+          return
+        }
+        let prepared = prepareImport(parsed, ids)
+        let answer = await postJson('/cards', { card: prepared.card })
+        if (answer?.code === 'exists') {
+          prepared = prepareImport(parsed, [...ids, prepared.card.id])
+          answer = await postJson('/cards', { card: prepared.card })
+        }
+        if (answer === undefined || answer.ok !== true) {
+          showNotice('error', answer?.error ?? '导入失败')
+          return
+        }
+        void reload()
+        showNotice('info', prepared.versionWarning
+          ? `已导入为 ${prepared.card.id}；版本未验证，已按当前格式读取。`
+          : `已导入为 ${prepared.card.id}`)
+      }
+
       const defaultName = state.cards.find(entry => entry.id === state.defaultCard)?.name
         ?? state.defaultCard
         ?? '未设置'
@@ -805,17 +903,11 @@ window.__ModuleLoader__.load({
           'span',
           { className: 'dshcc-actions' },
           entry.sessionsUsing > 0
-            // Re-applying is opt-in and separate from saving: a live session
-            // keeps the card version it started with, so a saved edit reaches
-            // it only when someone presses this. The list is reloaded after,
-            // because the session count it reports can change.
             ? react.createElement(Button, {
                 size: 'sm',
                 variant: 'outline',
                 onClick: async () => {
                   const answer = await postJson(`/cards/${encodeURIComponent(entry.id)}/apply`, {})
-                  // The count on success is not shown; only a failure needs a
-                  // voice here, and a success clears whatever the last one said.
                   setApplyError(answer === undefined || answer.ok !== true
                     ? (answer?.error ?? '重新应用失败')
                     : null)
@@ -823,6 +915,21 @@ window.__ModuleLoader__.load({
                 },
               }, '重新应用')
             : null,
+          react.createElement(Menu, {
+            open: menuFor === entry.id,
+            items: menuItems,
+            onSelect: (action) => {
+              setMenuFor(null)
+              if (action === 'export') void exportCard(entry.id)
+              else if (action === 'copy') void copyCard(entry)
+            },
+            onClose: () => setMenuFor(null),
+            side: 'bottom',
+            anchor: react.createElement(Pill, {
+              active: menuFor === entry.id,
+              onClick: () => setMenuFor(menuFor === entry.id ? null : entry.id),
+            }, '更多'),
+          }),
           react.createElement(Button, {
             size: 'sm',
             variant: 'ghost',
@@ -834,6 +941,12 @@ window.__ModuleLoader__.load({
       return react.createElement(
         'div',
         { className: 'dshcc-root' },
+        notice === null
+          ? null
+          : react.createElement('p', {
+              className: 'dshcc-callout',
+              'data-tone': notice.tone === 'error' ? 'error' : undefined,
+            }, notice.text),
         openError === null
           ? null
           : react.createElement('p', { className: 'dshcc-callout', 'data-tone': 'error' }, openError),
@@ -861,10 +974,21 @@ window.__ModuleLoader__.load({
             }),
             react.createElement('span', { className: 'dshcc-spacer' }),
             react.createElement(Button, {
+              variant: 'outline',
+              onClick: () => fileInput.current?.click(),
+            }, '导入'),
+            react.createElement(Button, {
               variant: 'primary',
               onClick: () => { void openEditor(undefined) },
             }, '新建卡片'),
           ),
+          react.createElement('input', {
+            ref: fileInput,
+            type: 'file',
+            accept: '.dshcd,application/json',
+            style: { display: 'none' },
+            onChange: importFile,
+          }),
           react.createElement('p', { className: 'dshcc-muted' },
             '新会话默认使用这张卡；单个会话可在输入框左侧切换。'),
         ),
