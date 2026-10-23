@@ -732,6 +732,7 @@ window.__ModuleLoader__.load({
       const [openError, setOpenError] = react.useState(null)
       const [notice, setNotice] = react.useState(null)
       const [menuFor, setMenuFor] = react.useState(null)
+      const [confirmDelete, setConfirmDelete] = react.useState(null)
       const fileInput = react.useRef(null)
 
       // `reload` takes an optional "still mounted" predicate so the mount
@@ -805,6 +806,7 @@ window.__ModuleLoader__.load({
       const menuItems = [
         { id: 'export', label: '导出' },
         { id: 'copy', label: '复制' },
+        { id: 'delete', label: '删除' },
       ]
 
       const exportCard = async (cardId) => {
@@ -883,6 +885,24 @@ window.__ModuleLoader__.load({
           : `已导入为 ${prepared.card.id}`)
       }
 
+      const removeCard = async (entry) => {
+        setConfirmDelete(null)
+        const answer = await deleteJson(`/cards/${encodeURIComponent(entry.id)}`)
+        if (answer === undefined) {
+          showNotice('error', '删除失败：无法连接宿主。')
+          return
+        }
+        if (answer.ok !== true) {
+          showNotice('error', answer.error ?? '删除失败')
+          return
+        }
+        void reload()
+        const warnings = answer.warnings ?? []
+        showNotice(warnings.length > 0 ? 'error' : 'info', warnings.length > 0
+          ? `已删除 ${entry.id}，但引用清理未完全成功。`
+          : `已删除 ${entry.id}，${answer.detached ?? 0} 个会话已改为不使用。`)
+      }
+
       const defaultName = state.cards.find(entry => entry.id === state.defaultCard)?.name
         ?? state.defaultCard
         ?? '未设置'
@@ -902,39 +922,67 @@ window.__ModuleLoader__.load({
         react.createElement(
           'span',
           { className: 'dshcc-actions' },
-          entry.sessionsUsing > 0
-            ? react.createElement(Button, {
-                size: 'sm',
-                variant: 'outline',
-                onClick: async () => {
-                  const answer = await postJson(`/cards/${encodeURIComponent(entry.id)}/apply`, {})
-                  setApplyError(answer === undefined || answer.ok !== true
-                    ? (answer?.error ?? '重新应用失败')
-                    : null)
-                  void reload()
-                },
-              }, '重新应用')
-            : null,
-          react.createElement(Menu, {
-            open: menuFor === entry.id,
-            items: menuItems,
-            onSelect: (action) => {
-              setMenuFor(null)
-              if (action === 'export') void exportCard(entry.id)
-              else if (action === 'copy') void copyCard(entry)
-            },
-            onClose: () => setMenuFor(null),
-            side: 'bottom',
-            anchor: react.createElement(Pill, {
-              active: menuFor === entry.id,
-              onClick: () => setMenuFor(menuFor === entry.id ? null : entry.id),
-            }, '更多'),
-          }),
-          react.createElement(Button, {
-            size: 'sm',
-            variant: 'ghost',
-            onClick: () => { void openEditor(entry.id) },
-          }, '编辑'),
+          confirmDelete === entry.id
+            ? [
+                react.createElement('span', { key: 'ask', className: 'dshcc-meta' }, '确认删除？'),
+                react.createElement(Button, {
+                  key: 'yes',
+                  size: 'sm',
+                  variant: 'outline',
+                  onClick: () => { void removeCard(entry) },
+                }, '确认'),
+                react.createElement(Button, {
+                  key: 'no',
+                  size: 'sm',
+                  variant: 'ghost',
+                  onClick: () => setConfirmDelete(null),
+                }, '取消'),
+              ]
+            : [
+                entry.sessionsUsing > 0
+                  // Re-applying is opt-in and separate from saving: a live session
+                  // keeps the card version it started with, so a saved edit reaches
+                  // it only when someone presses this. The list is reloaded after,
+                  // because the session count it reports can change.
+                  ? react.createElement(Button, {
+                      key: 'apply',
+                      size: 'sm',
+                      variant: 'outline',
+                      onClick: async () => {
+                        const answer = await postJson(`/cards/${encodeURIComponent(entry.id)}/apply`, {})
+                        // The count on success is not shown; only a failure needs a
+                        // voice here, and a success clears whatever the last one said.
+                        setApplyError(answer === undefined || answer.ok !== true
+                          ? (answer?.error ?? '重新应用失败')
+                          : null)
+                        void reload()
+                      },
+                    }, '重新应用')
+                  : null,
+                react.createElement(Menu, {
+                  key: 'menu',
+                  open: menuFor === entry.id,
+                  items: menuItems,
+                  onSelect: (action) => {
+                    setMenuFor(null)
+                    if (action === 'export') void exportCard(entry.id)
+                    else if (action === 'copy') void copyCard(entry)
+                    else if (action === 'delete') setConfirmDelete(entry.id)
+                  },
+                  onClose: () => setMenuFor(null),
+                  side: 'bottom',
+                  anchor: react.createElement(Pill, {
+                    active: menuFor === entry.id,
+                    onClick: () => setMenuFor(menuFor === entry.id ? null : entry.id),
+                  }, '更多'),
+                }),
+                react.createElement(Button, {
+                  key: 'edit',
+                  size: 'sm',
+                  variant: 'ghost',
+                  onClick: () => { void openEditor(entry.id) },
+                }, '编辑'),
+              ],
         ),
       ))
 
