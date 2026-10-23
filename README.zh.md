@@ -95,6 +95,10 @@ dsh plugin --profile <profile> add github:sildo466/dsh-character-cards
 ## 文档
 
 - [卡片格式、HTTP 路由与开发说明](https://github.com/sildo466/dsh-character-cards/blob/master/docs/engineering.zh.md)
+- [更新日志](https://github.com/sildo466/dsh-character-cards/blob/master/CHANGELOG.md)
+- [贡献指南](https://github.com/sildo466/dsh-character-cards/blob/master/CONTRIBUTING.md)（英文）
+- [行为准则](https://github.com/sildo466/dsh-character-cards/blob/master/CODE_OF_CONDUCT.md)（英文）
+- [安全策略](https://github.com/sildo466/dsh-character-cards/blob/master/SECURITY.md)
 
 ## 许可证
 

@@ -95,6 +95,10 @@ When a card is in use, its row shows how many sessions are on it. Press 重新�
 ## Documentation
 
 - [Card format, HTTP routes, and development](https://github.com/sildo466/dsh-character-cards/blob/master/docs/engineering.md)
+- [Changelog](https://github.com/sildo466/dsh-character-cards/blob/master/CHANGELOG.md)
+- [Contributing](https://github.com/sildo466/dsh-character-cards/blob/master/CONTRIBUTING.md)
+- [Code of Conduct](https://github.com/sildo466/dsh-character-cards/blob/master/CODE_OF_CONDUCT.md)
+- [Security policy](https://github.com/sildo466/dsh-character-cards/blob/master/SECURITY.md)
 
 ## License
 
