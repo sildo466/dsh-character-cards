@@ -72,9 +72,9 @@ import { mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  cardExists, clearSessionOverride, isValidCardId,
-  listCardSummaries, loadCardLibrary, readCardFile, readDefaultCardId, readSessionOverrides,
-  renderCardById, resolveCardId, setSessionOverride, writeCardFile,
+  cardExists, clearDefaultCardId, clearSessionOverride, deleteCardFile, detachOverridesForCard,
+  isValidCardId, listCardSummaries, loadCardLibrary, readCardFile, readDefaultCardId,
+  readSessionOverrides, renderCardById, resolveCardId, setSessionOverride, writeCardFile,
 } from '../src/cards.js'
 
 /** A temp library directory holding the given cards, keyed by filename. */
@@ -276,4 +276,34 @@ test('writeCardFile leaves no temporary file behind', () => {
   const dir = library({})
   writeCardFile(dir, { dshcd: 1, id: 'clean' }, collector())
   assert.deepEqual(readdirSync(dir).sort(), ['clean.dshcd'])
+})
+
+test('deleteCardFile removes an existing card and reports a missing one', () => {
+  const dir = library({ 'terse.dshcd': TERSE })
+  const logger = collector()
+  assert.deepEqual(deleteCardFile(dir, 'terse', logger), { ok: true })
+  assert.equal(cardExists(dir, 'terse'), false)
+  assert.deepEqual(deleteCardFile(dir, 'terse', logger), {
+    ok: false, code: 'not-found', error: 'no card "terse"',
+  })
+})
+
+test('clearDefaultCardId removes the pointer and tolerates its absence', () => {
+  const dir = library({})
+  const logger = collector()
+  writeFileSync(join(dir, 'default'), 'terse\n')
+  assert.equal(clearDefaultCardId(dir, logger), true)
+  assert.equal(readDefaultCardId(dir), undefined)
+  assert.equal(clearDefaultCardId(dir, logger), true)
+})
+
+test('detachOverridesForCard turns only matching pins into explicit none', () => {
+  const dir = library({})
+  const logger = collector()
+  setSessionOverride(dir, 's1', 'terse', logger)
+  setSessionOverride(dir, 's2', 'teacher', logger)
+  setSessionOverride(dir, 's3', null, logger)
+  assert.deepEqual(detachOverridesForCard(dir, 'terse', logger), { ok: true, detached: 1 })
+  assert.deepEqual(readSessionOverrides(dir, logger), { s1: null, s2: 'teacher', s3: null })
+  assert.deepEqual(detachOverridesForCard(dir, 'ghost', logger), { ok: true, detached: 0 })
 })

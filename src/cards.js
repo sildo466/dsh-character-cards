@@ -7,7 +7,7 @@
  * @module dsh-character-cards/cards
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 /** @typedef {{ warn?: (message: string) => void }} Logger */
@@ -398,6 +398,27 @@ export function writeCardFile(dir, card, logger) {
 }
 
 /**
+ * Delete one card file.
+ * @param {string} dir - library directory.
+ * @param {string} id - card id.
+ * @param {Logger} logger - logger for failures.
+ * @returns {{ ok: true } | { ok: false, code: string, error: string }} the outcome.
+ */
+export function deleteCardFile(dir, id, logger) {
+  if (!isValidCardId(id)) {
+    return { ok: false, code: 'invalid-id', error: 'id must match ^[a-z0-9][a-z0-9-]*$' }
+  }
+  try {
+    unlinkSync(cardPath(dir, id))
+    return { ok: true }
+  } catch (error) {
+    if (error?.code === 'ENOENT') return { ok: false, code: 'not-found', error: `no card "${id}"` }
+    logger.warn?.(`cannot delete ${cardPath(dir, id)}: ${String(error)}`)
+    return { ok: false, code: 'delete-failed', error: String(error) }
+  }
+}
+
+/**
  * Read the global default card id from its pointer file.
  * @param {string} dir - library directory.
  * @returns {string | undefined} the id, or undefined when unset.
@@ -422,6 +443,23 @@ export function setDefaultCardId(dir, cardId, logger) {
     return true
   } catch (error) {
     logger.warn?.(`cannot write ${join(dir, DEFAULT_POINTER_NAME)}: ${String(error)}`)
+    return false
+  }
+}
+
+/**
+ * Remove the global default pointer.
+ * @param {string} dir - library directory.
+ * @param {Logger} logger - logger for failures.
+ * @returns {boolean} whether the pointer is gone (absent counts as success).
+ */
+export function clearDefaultCardId(dir, logger) {
+  try {
+    unlinkSync(join(dir, DEFAULT_POINTER_NAME))
+    return true
+  } catch (error) {
+    if (error?.code === 'ENOENT') return true
+    logger.warn?.(`cannot clear ${join(dir, DEFAULT_POINTER_NAME)}: ${String(error)}`)
     return false
   }
 }
@@ -499,6 +537,29 @@ export function clearSessionOverride(dir, sessionId, logger) {
   const overrides = readSessionOverrides(dir, logger)
   delete overrides[sessionId]
   return writeOverrides(dir, overrides, logger)
+}
+
+/**
+ * Turn every pin naming one card into an explicit "no card".
+ *
+ * The explicit null matters: dropping the entry would make those sessions
+ * follow the default again, which is not what deleting their card means.
+ * @param {string} dir - library directory.
+ * @param {string} cardId - the card being deleted.
+ * @param {Logger} logger - logger for failures.
+ * @returns {{ ok: boolean, detached: number }} whether the write landed and how many entries changed.
+ */
+export function detachOverridesForCard(dir, cardId, logger) {
+  const overrides = readSessionOverrides(dir, logger)
+  let detached = 0
+  for (const [sessionId, value] of Object.entries(overrides)) {
+    if (value === cardId) {
+      overrides[sessionId] = null
+      detached += 1
+    }
+  }
+  if (detached === 0) return { ok: true, detached: 0 }
+  return { ok: writeOverrides(dir, overrides, logger), detached }
 }
 
 /**
