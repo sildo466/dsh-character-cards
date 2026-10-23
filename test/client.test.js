@@ -206,3 +206,11 @@ test('isDirty compares structurally, not by key order', () => {
   assert.equal(isDirty({ a: 1 }, null), true)
 })
 
+test('nextSelection keeps a still-offered value across a refresh', () => {
+  const { nextSelection } = loaded.factory(makeFakeRequire())
+  const entries = [{ id: 'card:a' }, { id: 'card:b' }, { id: 'none' }]
+  assert.equal(nextSelection(entries, 'card:b', 'card:a'), 'card:b')
+  // A value the host no longer offers falls back to the computed one.
+  assert.equal(nextSelection(entries, 'card:gone', 'card:a'), 'card:a')
+})
+

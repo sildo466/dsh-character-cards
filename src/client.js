@@ -333,6 +333,17 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Keep a selection across a list refresh when it still exists.
+     * @param entries - the refreshed options.
+     * @param previousValue - the value before the refresh.
+     * @param computedValue - the value the host state would choose.
+     * @returns the previous value when it is still offered, else the computed one.
+     */
+    function nextSelection(entries, previousValue, computedValue) {
+      return entries.some(entry => entry.id === previousValue) ? previousValue : computedValue
+    }
+
+    /**
      * One editable field.
      * @param props.draft - the card.
      * @param props.field - `{ path, label, kind }` from editorGroups().
@@ -869,6 +880,10 @@ window.__ModuleLoader__.load({
       const sessionId = mode === 'session' ? props.sessionId : undefined
       const [state, setState] = react.useState({ status: 'loading', entries: [], value: '' })
       const [open, setOpen] = react.useState(false)
+      const [reloadKey, setReloadKey] = react.useState(0)
+      // A manual refresh (menu open) must not overwrite the selection the user
+      // just made with a list that is only stale, not authoritative.
+      const keepValue = react.useRef(false)
 
       react.useEffect(() => {
         let cancelled = false
@@ -883,15 +898,29 @@ window.__ModuleLoader__.load({
             ? undefined
             : await getJson(`/session/${encodeURIComponent(sessionId)}`)
           if (cancelled) return
-          setState({
-            status: 'ready',
-            entries: switcherEntries(mode, cards),
-            value: initialSelection(mode, cards, session),
+          const preserve = keepValue.current
+          keepValue.current = false
+          setState(previous => {
+            const entries = switcherEntries(mode, cards)
+            const computed = initialSelection(mode, cards, session)
+            return {
+              status: 'ready',
+              entries,
+              value: preserve ? nextSelection(entries, previous.value, computed) : computed,
+            }
           })
         }
         void load()
         return () => { cancelled = true }
-      }, [mode, sessionId])
+      }, [mode, sessionId, reloadKey])
+
+      // The list is cached for the life of the composer. A card created in
+      // settings after that first read would otherwise stay invisible until
+      // a page reload, so every open asks the host again.
+      const reload = () => {
+        keepValue.current = true
+        setReloadKey(key => key + 1)
+      }
 
       // Nothing at all until the host answers: a control that appears and then
       // changes its mind is worse than one that appears settled.
@@ -917,6 +946,11 @@ window.__ModuleLoader__.load({
         else void postJson(sessionPath, { cardId: option.slice('card:'.length) })
       }
 
+      const togglePicker = () => {
+        if (!open) reload()
+        setOpen(!open)
+      }
+
       if (canUseMenu) {
         const current = state.entries.find(entry => entry.id === state.value)
         return react.createElement(Menu, {
@@ -930,7 +964,7 @@ window.__ModuleLoader__.load({
           side: 'top',
           anchor: react.createElement(
             Pill,
-            { onClick: () => setOpen(!open), active: open, title: '角色卡' },
+            { onClick: togglePicker, active: open, title: '角色卡' },
             react.createElement('span', null, current?.label ?? '角色卡'),
             ChevronIcon === undefined ? null : react.createElement(
               'span',
@@ -947,6 +981,7 @@ window.__ModuleLoader__.load({
           style: CHIP_STYLE,
           value: state.value,
           title: '角色卡',
+          onFocus: reload,
           onChange: (event) => choose(event.target.value),
         },
         state.entries.map(entry =>
@@ -1013,6 +1048,6 @@ window.__ModuleLoader__.load({
     // undefined, and both mounts silently do nothing.
     const inject = ['slots']
 
-    return { apply, inject, editorGroups, fieldOf, initialSelection, isDirty, switcherEntries, switcherMode, withField }
+    return { apply, inject, editorGroups, fieldOf, initialSelection, isDirty, nextSelection, switcherEntries, switcherMode, withField }
   },
 })
