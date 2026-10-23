@@ -1,6 +1,6 @@
 {
   "name": "dsh-character-cards",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Switchable identity cards (.dshcd) for DSH agents: tone, persona, and code style bound to one session's prompt section.",
   "type": "module",
   "main": "src/index.js",
