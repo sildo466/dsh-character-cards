@@ -11,5 +11,8 @@ node_modules/
 # Internal implementation plans (kept local, not published).
 docs/superpowers/plans/
 
+# Raw screenshot sources (the README uses the processed copies).
+docs/images/originals/
+
 # Local agent instructions.
 CLAUDE.md
