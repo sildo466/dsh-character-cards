@@ -82,6 +82,7 @@ dsh plugin --profile <profile> add github:sildo466/dsh-character-cards
 ## 导入、导出、复制、删除
 
 - **导入 / 导出**——一张卡就是一个 `.dshcd` 文件。导出后可以发给朋友，导入就能用。当前版本不认识的字段会原样保留。
+- **示例**——从 [example_cards/](https://github.com/sildo466/dsh-character-cards/tree/master/example_cards) 导入任意一张，再改副本。
 - **复制**——复制一张卡再改副本，原卡不受影响。
 - **删除**——删除卡片，把钉在它上面的会话改成“不使用”，如果默认指针指向它也一并清空。
 

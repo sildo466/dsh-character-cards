@@ -82,6 +82,7 @@ When a card is in use, its row shows how many sessions are on it. Press 重新�
 ## Make it yours
 
 - **Import / export** — a card is one `.dshcd` file. Export it, send it to a friend, import it back. Fields this build does not know are preserved.
+- **Examples** — import any card from [example_cards/](https://github.com/sildo466/dsh-character-cards/tree/master/example_cards), then edit a copy.
 - **Copy** — duplicate a card and edit the copy; the original stays untouched.
 - **Delete** — removes the card, turns pinned sessions into "no card", and clears the default if it pointed there.
 
