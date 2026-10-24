@@ -13,7 +13,7 @@ One chat wants a patient teacher. The next wants a blunt code reviewer. Another 
 
 Edit cards in Settings, switch them beside the composer, and change them mid-conversation without losing context.
 
-![A conversation using the patient-teacher card, with the card name visible beside the composer](docs/images/chat-example.png)
+![A conversation using the patient-teacher card, with the card name visible beside the composer](https://cdn.jsdelivr.net/gh/sildo466/dsh-character-cards@master/docs/images/chat-example.png)
 
 ## Why not just use a preset?
 
@@ -57,7 +57,7 @@ The install is the only step that needs a restart. Creating, editing, and switch
 3. Write the character: who they are, how they speak, how they work.
 4. Pick it beside the composer for the current session, or set it as the default for new sessions.
 
-![The card library in Settings, showing the default card and per-session usage counts](docs/images/card-list.png)
+![The card library in Settings, showing the default card and per-session usage counts](https://cdn.jsdelivr.net/gh/sildo466/dsh-character-cards@master/docs/images/card-list.png)
 
 ## Switching
 
@@ -79,7 +79,7 @@ The editor groups fields the way you would brief a new teammate:
 - **Workflow** — when to ask, when to verify, how to plan.
 - **Guardrails** — the lines they never cross.
 
-![The card editor, with grouped fields and a one-line explanation under each field](docs/images/card-editor.png)
+![The card editor, with grouped fields and a one-line explanation under each field](https://cdn.jsdelivr.net/gh/sildo466/dsh-character-cards@master/docs/images/card-editor.png)
 
 ## Saving and applying
 
