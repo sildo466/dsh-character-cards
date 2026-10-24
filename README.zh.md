@@ -13,7 +13,7 @@
 
 在设置里编辑，在输入框旁切换，对话中途换角色也不丢上下文。
 
-![使用「耐心的教学者」进行的一段对话，输入框左侧显示当前卡片](https://raw.githubusercontent.com/sildo466/dsh-character-cards/master/docs/images/chat-example.png)
+![使用「耐心的教学者」进行的一段对话，输入框左侧显示当前卡片](docs/images/chat-example.png)
 
 ## 为什么不用预设？
 
@@ -57,7 +57,7 @@ dsh plugin --profile <profile> add github:sildo466/dsh-character-cards
 3. 写下这个角色：它是谁、怎么说话、怎么做事。
 4. 在输入框旁选择它用于当前会话，或者把它设为新会话的默认卡。
 
-![设置里的卡片库，显示默认卡和每张卡的使用会话数](https://raw.githubusercontent.com/sildo466/dsh-character-cards/master/docs/images/card-list.png)
+![设置里的卡片库，显示默认卡和每张卡的使用会话数](docs/images/card-list.png)
 
 ## 切换
 
@@ -79,7 +79,7 @@ dsh plugin --profile <profile> add github:sildo466/dsh-character-cards
 - **工作方式**——什么时候追问、什么时候先验证、怎么规划。
 - **硬性约束**——绝对不能越过的线。
 
-![卡片编辑器，分组字段和每个字段下方的一行说明](https://raw.githubusercontent.com/sildo466/dsh-character-cards/master/docs/images/card-editor.png)
+![卡片编辑器，分组字段和每个字段下方的一行说明](docs/images/card-editor.png)
 
 ## 保存与生效
 
