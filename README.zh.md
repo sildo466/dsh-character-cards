@@ -2,6 +2,8 @@
 
 [English](README.md) | 简体中文
 
+[![npm](https://img.shields.io/npm/v/dsh-character-cards.svg)](https://www.npmjs.com/package/dsh-character-cards)
+[![downloads](https://img.shields.io/npm/dm/dsh-character-cards.svg)](https://www.npmjs.com/package/dsh-character-cards)
 [![DSH](https://img.shields.io/badge/DSH-%3E%3D0.2.0--rc.2-4c6ef5)](#环境要求)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/sildo466/dsh-character-cards/blob/master/LICENSE)
 
