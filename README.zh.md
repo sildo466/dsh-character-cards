@@ -87,6 +87,10 @@ dsh plugin --profile <profile> add github:sildo466/dsh-character-cards
 
 有会话正在使用某张卡时，列表行会显示数量。点“重新应用”，才会把新版本推给这些 live 会话。
 
+## 数据位置
+
+卡片保存在 `$DSH_HOME/character-cards/`（未设置 `DSH_HOME` 时是 `~/.dsh/character-cards/`）。卸载插件**不会**删除这些文件：以后重新安装，卡片仍然在。想彻底清空，手动删掉这个目录即可。
+
 ## 导入、导出、复制、删除
 
 - **导入 / 导出**——一张卡就是一个 `.dshcd` 文件。导出后可以发给朋友，导入就能用。当前版本不认识的字段会原样保留。

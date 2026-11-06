@@ -87,6 +87,10 @@ Saving writes the card to disk. It does **not** silently change a conversation t
 
 When a card is in use, its row shows how many sessions are on it. Press 重新应用 to push the saved version into those live sessions.
 
+## Data on disk
+
+Cards live in `$DSH_HOME/character-cards/` (`~/.dsh/character-cards/` when `DSH_HOME` is unset). Uninstalling the plugin does **not** delete them: reinstall later and the cards are still there. Remove that directory yourself if you want to start clean.
+
 ## Make it yours
 
 - **Import / export** — a card is one `.dshcd` file. Export it, send it to a friend, import it back. Fields this build does not know are preserved.
